@@ -29,7 +29,7 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "tsdiag" {
 		os.Exit(runTSDiagCommand(os.Args[2:]))
 	}
-	startupArgs, dangerousVMax := parseStartupArgs(os.Args[1:])
+	startupArgs, dangerousVMax, fullPowerCommands := parseStartupArgs(os.Args[1:])
 
 	if err := godotenv.Overload(); err != nil {
 		// Ignore if no .env found
@@ -336,6 +336,7 @@ func main() {
 	// TUI
 	model := tui.NewModel(agentInst, repo, shadowRepo, indexer, session.ID, workspaceRoot, modelName, version, watchdogConfig.ContextTokenLimit, agentTimeoutMinutes, runTimeoutMinutes, repo.Calls)
 	model.SetVMaxAvailable(dangerousVMax)
+	model.SetFullPowerCommands(fullPowerCommands)
 	p := tea.NewProgram(
 		model,
 		// tea.WithAltScreen(),
@@ -347,18 +348,21 @@ func main() {
 	}
 }
 
-func parseStartupArgs(args []string) ([]string, bool) {
+func parseStartupArgs(args []string) ([]string, bool, bool) {
 	filtered := make([]string, 0, len(args))
 	dangerousVMax := false
+	fullPowerCommands := false
 	for _, arg := range args {
-		switch arg {
+		switch strings.ToLower(strings.TrimSpace(arg)) {
 		case "--dangerous-vmax":
 			dangerousVMax = true
+		case "fullpower":
+			fullPowerCommands = true
 		default:
 			filtered = append(filtered, arg)
 		}
 	}
-	return filtered, dangerousVMax
+	return filtered, dangerousVMax, fullPowerCommands
 }
 
 func resolveToolProfile(args []string) string {
@@ -371,7 +375,7 @@ func resolveToolProfile(args []string) string {
 			profile = agent.ToolProfileDefault
 		default:
 			fmt.Printf("Fatal: unknown command/profile: %s\n", args[0])
-			fmt.Println("Usage: virgil [small|default] or virgil tsdiag --file <path>")
+			fmt.Println("Usage: virgil [small|default] [fullpower] or virgil tsdiag --file <path>")
 			os.Exit(1)
 		}
 	}

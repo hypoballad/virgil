@@ -100,6 +100,27 @@ func TestSlashCompletionSuggestsCommandRemainder(t *testing.T) {
 	}
 }
 
+func TestSlashCompletionIncludesPromotedCommandsByDefault(t *testing.T) {
+	model := newInputTestModel()
+	model.input.SetValue("/rei")
+	model.updateSlashCompletion()
+
+	if got := model.slashCompletion; got != "ndex" {
+		t.Fatalf("expected /reindex remainder by default, got %q", got)
+	}
+}
+
+func TestSlashCompletionShowsAllCommandsInFullPower(t *testing.T) {
+	model := newInputTestModel()
+	model.SetFullPowerCommands(true)
+	model.input.SetValue("/callg")
+	model.updateSlashCompletion()
+
+	if got := model.slashCompletion; got != "raph" {
+		t.Fatalf("expected /callgraph remainder in fullpower, got %q", got)
+	}
+}
+
 func TestSlashCompletionIgnoresPathsAndArguments(t *testing.T) {
 	tests := []string{
 		"cat /r",

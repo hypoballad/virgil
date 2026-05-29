@@ -1126,6 +1126,37 @@ func (m Model) slashCommandHelp() string {
 	if profile == "" {
 		profile = "default"
 	}
+	if !m.fullPowerCommands {
+		return fmt.Sprintf(`Tool profile: %s
+
+Available slash commands:
+  /rewind          Show shadow git history
+  /task <task>     Execute a task with structured TODO list and result report
+  /tasks <path>    List task IDs and status from a task breakdown document
+  /do <id> <path>  Execute one explicit task from a task breakdown document
+  /breakdown <source> [--output <path>]  Generate a task breakdown document
+  /btw <task>      Execute a single quick task without TODO structure
+  /reindex         Reindex workspace (mtime-based diff; auto-forces on index version changes)
+  /shrink          Compress older context into a summary (auto at 50%% or 20+ messages)
+  /clear           Clear context and start a new session
+  /continue        Continue a task paused at the iteration limit
+  /abort           Stop a task paused at the iteration limit
+  /debug-context   Load debug context JSON and attach it to chat and /task
+  /vmax            Arm one-shot VMAX mode when started with --dangerous-vmax
+  /help            Show this help
+
+Start with 'virgil fullpower' to show and complete all slash commands.
+
+Keyboard shortcuts:
+  Enter            Insert newline
+  Alt+Enter        Send message
+  Ctrl+D           Send message
+  Alt+Up/Down      Navigate input history
+  1 / 2            Choose pending action when the input is empty
+  Esc              Cancel pending action
+  Shift+Tab        Toggle Plan/Edit mode
+  Ctrl+C (twice)   Quit Virgil`, profile)
+	}
 	return fmt.Sprintf(`Tool profile: %s
 
 Available slash commands:

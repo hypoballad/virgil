@@ -26,7 +26,24 @@ const (
 	inputMarkerGap         = "  "
 )
 
-var slashAutocompleteCommands = []string{
+var coreSlashCommands = []string{
+	"/rewind",
+	"/task",
+	"/tasks",
+	"/do",
+	"/breakdown",
+	"/btw",
+	"/reindex",
+	"/shrink",
+	"/clear",
+	"/continue",
+	"/abort",
+	"/debug-context",
+	"/vmax",
+	"/help",
+}
+
+var allSlashCommands = []string{
 	"/rewind",
 	"/confirm",
 	"/continue",
@@ -87,7 +104,8 @@ type Model struct {
 	appVersion                string
 	toolProfile               string // 追加: ツールプロファイル
 	contextLimit              int    // 追加: コンテキスト制限
-	planMode                  bool   // 追加: プランモード状態
+	fullPowerCommands         bool
+	planMode                  bool // 追加: プランモード状態
 	debugContext              *debugctx.Context
 	vmaxAvailable             bool
 	vmaxArmed                 bool
@@ -231,6 +249,11 @@ func (m *Model) SetVMaxAvailable(enabled bool) {
 	m.vmaxAvailable = enabled
 }
 
+func (m *Model) SetFullPowerCommands(enabled bool) {
+	m.fullPowerCommands = enabled
+	m.updateSlashCompletion()
+}
+
 func (m *Model) setInputSize(outerWidth int) {
 	if outerWidth <= 0 {
 		outerWidth = defaultInputOuterWidth
@@ -260,7 +283,7 @@ func (m *Model) adjustInputHeight() {
 
 func (m *Model) updateSlashCompletion() {
 	value := m.input.Value()
-	m.slashCompletion = slashCompletionFor(value)
+	m.slashCompletion = slashCompletionForCommands(value, m.slashCommands())
 }
 
 func (m *Model) acceptSlashCompletion() {
@@ -274,13 +297,24 @@ func (m *Model) acceptSlashCompletion() {
 }
 
 func slashCompletionFor(value string) string {
+	return slashCompletionForCommands(value, coreSlashCommands)
+}
+
+func slashCompletionForCommands(value string, commands []string) string {
 	if value == "" || value[0] != '/' || strings.ContainsAny(value, " \t\r\n") {
 		return ""
 	}
-	for _, command := range slashAutocompleteCommands {
+	for _, command := range commands {
 		if strings.HasPrefix(command, value) && command != value {
 			return strings.TrimPrefix(command, value)
 		}
 	}
 	return ""
+}
+
+func (m Model) slashCommands() []string {
+	if m.fullPowerCommands {
+		return allSlashCommands
+	}
+	return coreSlashCommands
 }
