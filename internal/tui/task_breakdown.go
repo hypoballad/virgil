@@ -338,6 +338,9 @@ Task title: %s
 Hard constraints:
 - Execute only this task.
 - Do not start any other task ID.
+- If this task creates or updates a plan, design document, or migration policy, do not write concrete implementation code unless the task explicitly asks for code.
+- For plan, design document, or migration policy tasks, focus on phases, affected files/modules, risks, decisions, validation strategy, migration order, and open questions.
+- For long Markdown documents, create or preserve a heading skeleton first, then append one bounded section at a time.
 - First inspect the current edit target around the intended insertion point or changed symbol.
 - Read only the References listed in the task unless blocked.
 - Follow the task's Edit Steps one at a time.
@@ -440,6 +443,8 @@ Rules:
 - Use Status: todo for new tasks.
 - If the user will run runtime tests, include Manual test: pending.
 - Do not include company-specific names unless they are already present in the requested source material.
+- For plan, design document, or migration policy work, do not include concrete implementation code unless the source explicitly asks for code.
+- For long Markdown deliverables, split work into skeleton creation and bounded section-append tasks.
 - Do not edit implementation files.
 
 Task schema:

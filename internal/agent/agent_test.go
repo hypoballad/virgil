@@ -568,6 +568,29 @@ func TestRunTaskUsesTemplatePromptAndHistory(t *testing.T) {
 	}
 }
 
+func TestRunTaskIncludesPromptAppend(t *testing.T) {
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{Message: llm.Message{Role: "assistant", Content: "TODO:\n1. [x] 確認する\n\n## 結果報告\n完了"}},
+		},
+	}
+
+	agent := New(mockLLM, tools.NewRegistry())
+	agent.SetSystemPrompt(SystemPromptWithAppend(SystemPromptDefault, "custom planning rule"))
+
+	if _, err := agent.RunTask(context.Background(), nil, "計画書を作成して"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	req := mockLLM.requests[0]
+	if !strings.Contains(req.Messages[0].Content, promptAppendSectionTitle) {
+		t.Fatalf("task prompt missing prompt append section:\n%s", req.Messages[0].Content)
+	}
+	if !strings.Contains(req.Messages[0].Content, "custom planning rule") {
+		t.Fatalf("task prompt missing custom prompt append:\n%s", req.Messages[0].Content)
+	}
+}
+
 func TestRunTaskContinuesWhenModelOnlyReturnsTodoList(t *testing.T) {
 	mockLLM := &mockLLM{
 		responses: []llm.ChatResponse{

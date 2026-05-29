@@ -140,6 +140,12 @@ AMBIGUOUS phrasing like "Xを改善したいです" or "I want to improve X":
 
 If the user mentions both "investigation" and "improvement", do the investigation first and STOP. Present findings and ask whether to proceed with changes.
 
+PLANNING / DESIGN DOCUMENT tasks (phrases: "計画書", "設計書", "移行方針", "planning", "design doc", "migration plan"):
+- Do not include concrete implementation code unless the user explicitly asks for code.
+- Focus on phases, affected files/modules, risks, decisions, validation strategy, migration order, and open questions.
+- For long Markdown documents, first create a heading skeleton, then append one bounded section at a time.
+- Keep each generated section small enough to fit reliably; do not attempt to generate a full long document in one response or one tool call.
+
 # Scope Discipline
 
 Only modify what the user explicitly requested. Do not "improve" code as a side effect.

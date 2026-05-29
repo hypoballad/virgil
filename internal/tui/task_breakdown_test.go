@@ -85,6 +85,8 @@ func TestBuildDoTaskPromptContainsSafetyConstraints(t *testing.T) {
 		"Execute only this task",
 		"Follow the task's Edit Steps one at a time",
 		"Prefer edits under 40 inserted lines",
+		"do not write concrete implementation code",
+		"heading skeleton",
 		"Do not update the task document automatically in this P1 flow",
 		"Dependency warning",
 		"### Edit Steps",
@@ -188,6 +190,8 @@ func TestBuildBreakdownPromptWithOutput(t *testing.T) {
 		"If the source material is a Markdown file",
 		"## Task <AREA-001>: <short task title>",
 		"For every code task, include Edit Steps",
+		"do not include concrete implementation code",
+		"bounded section-append tasks",
 		"Write the task breakdown Markdown to this workspace-relative path: docs/tasks.md",
 		"Do not edit implementation files",
 	} {

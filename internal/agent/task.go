@@ -30,6 +30,10 @@ TODO の数や内容はタスクに応じて調整してください。
 # スコープ制御
 
 - ユーザーが変更対象ファイルを明示した場合、原則としてそのファイルだけを編集してください。
+- 計画書・設計書・移行方針の作成では、ユーザーが明示的に求めない限り具体的な実装コードを書かないでください。
+- 計画書・設計書・移行方針では、フェーズ、影響範囲、リスク、判断事項、検証方針、移行順序を中心に記述してください。
+- 長い Markdown 文書は一括生成せず、見出しスケルトンを先に作り、章ごとに追記してください。
+- 長い Markdown 文書を追記するときは、1回の write_file/edit_file/edit_with_pattern で1章または小さな節だけを書いてください。
 - テスト追加を依頼された場合、まず既存テストファイルの流儀に合わせてテストを追加してください。
 - テスト対象の実装やプロンプト本文は、追加したテストが失敗し、その原因として必要だと確認できた場合にのみ変更してください。
 - 指定された変更と検証が完了したら、追加探索をせず最終報告してください。
@@ -96,9 +100,13 @@ func (a *Agent) buildTaskSystemPrompt() string {
 	if a.planMode {
 		modeText = SystemPromptModePlan
 	}
-	return taskTemplateSystemPrompt + "\n\n# Workspace\n\n" +
+	prompt := taskTemplateSystemPrompt + "\n\n# Workspace\n\n" +
 		"ワークスペースルート: " + a.workspaceRoot + "\n\n" +
 		"# Mode\n\n" + modeText
+	if extra := ExtractPromptAppend(a.systemPromptTemplate); extra != "" {
+		prompt = SystemPromptWithAppend(prompt, extra)
+	}
+	return prompt
 }
 
 func isIncompleteTaskTemplateResponse(content string) bool {

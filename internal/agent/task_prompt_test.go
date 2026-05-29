@@ -14,6 +14,9 @@ func TestTaskTemplateSystemPromptContainsKeyInstructions(t *testing.T) {
 		"スコープ制御",
 		"追加探索をせず最終報告",
 		"検証成功後",
+		"具体的な実装コードを書かない",
+		"見出しスケルトン",
+		"章ごとに追記",
 	}
 	for _, kw := range keywords {
 		if !strings.Contains(taskTemplateSystemPrompt, kw) {
@@ -68,6 +71,21 @@ func TestSystemPromptMentionsWorkspaceSpecsConvention(t *testing.T) {
 	for _, want := range required {
 		if !strings.Contains(SystemPromptDefault, want) {
 			t.Fatalf("SystemPromptDefault is missing workspace specs guidance %q", want)
+		}
+	}
+}
+
+func TestSystemPromptMentionsPlanningDocumentConstraints(t *testing.T) {
+	required := []string{
+		"PLANNING / DESIGN DOCUMENT tasks",
+		"Do not include concrete implementation code",
+		"first create a heading skeleton",
+		"one bounded section at a time",
+	}
+
+	for _, want := range required {
+		if !strings.Contains(SystemPromptDefault, want) {
+			t.Fatalf("SystemPromptDefault is missing planning document guidance %q", want)
 		}
 	}
 }

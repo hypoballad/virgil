@@ -16,6 +16,16 @@ func SystemPromptWithAppend(base, extra string) string {
 	return strings.TrimRight(base, "\n") + "\n\n" + promptAppendSectionTitle + "\n\n" + extra
 }
 
+// ExtractPromptAppend returns the local instruction section added by SystemPromptWithAppend.
+func ExtractPromptAppend(prompt string) string {
+	marker := "\n\n" + promptAppendSectionTitle + "\n\n"
+	idx := strings.LastIndex(prompt, marker)
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(prompt[idx+len(marker):])
+}
+
 func SystemPromptWithAppendFromEnv(base string) string {
 	path := strings.TrimSpace(os.Getenv("VIRGIL_PROMPT_APPEND"))
 	if path == "" {
