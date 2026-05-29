@@ -36,10 +36,10 @@ const summaryInputMaxChars = 30000
 const preflightShrinkRecentMessages = 8
 
 const (
-	vmaxEditFileMaxRawNewLinesChars   = 6000
-	vmaxEditFileMaxInsertedLines      = 80
-	vmaxEditWithPatternMaxReplacement = 6000
-	maxSemanticSafetyFailuresPerRun   = 2
+	largeEditFileMaxRawNewLinesChars   = 6000
+	largeEditFileMaxInsertedLines      = 80
+	largeEditWithPatternMaxReplacement = 6000
+	maxSemanticSafetyFailuresPerRun    = 2
 )
 
 const historySummarizationPrompt = `You are compressing older conversation history for a coding agent.
@@ -890,9 +890,9 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				continue
 			}
 
-			if blockMsg := vmaxLargeEditSafetyBlock(opts, tc.Function.Name, argsJSON); blockMsg != "" {
+			if blockMsg := largeEditSafetyBlock(opts, tc.Function.Name, argsJSON); blockMsg != "" {
 				log.Printf("agent: %s", blockMsg)
-				messages = scrubToolCallArguments(messages, tc.ID, "VMAX large edit payload was discarded; immediately retry with a smaller edit under the limit")
+				messages = scrubToolCallArguments(messages, tc.ID, "large edit payload was discarded; immediately retry with a smaller edit under the limit")
 				record.Result = &tools.Result{
 					IsError: true,
 					Content: blockMsg,
@@ -912,7 +912,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
 					return a.escalate(ctx, messages, response, signal)
 				}
-				if signal := recordSemanticSafetyFailure(semanticSafetyFailures, "vmax_large_edit", tc.Function.Name, blockMsg); signal != nil {
+				if signal := recordSemanticSafetyFailure(semanticSafetyFailures, "large_edit", tc.Function.Name, blockMsg); signal != nil {
 					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
 					return a.escalate(ctx, messages, response, signal)
 				}
@@ -1118,11 +1118,11 @@ func isVMaxRunOptions(opts RunOptions) bool {
 	return opts.MaxIterations >= VMaxIterations || (opts.AutoConfirmRunCommand && opts.PreflightShrink)
 }
 
-func vmaxLargeEditSafetyBlock(opts RunOptions, toolName string, argsJSON []byte) string {
-	if !isVMaxRunOptions(opts) {
-		return ""
+func largeEditSafetyBlock(opts RunOptions, toolName string, argsJSON []byte) string {
+	label := "large-edit safety"
+	if isVMaxRunOptions(opts) {
+		label = "VMAX large-edit safety"
 	}
-
 	switch toolName {
 	case "edit_file":
 		var args struct {
@@ -1134,14 +1134,15 @@ func vmaxLargeEditSafetyBlock(opts RunOptions, toolName string, argsJSON []byte)
 		}
 		rawLen := len(args.NewLines)
 		lineCount := rawNewLinesCount(args.NewLines)
-		if rawLen > vmaxEditFileMaxRawNewLinesChars || lineCount > vmaxEditFileMaxInsertedLines {
+		if rawLen > largeEditFileMaxRawNewLinesChars || lineCount > largeEditFileMaxInsertedLines {
 			return fmt.Sprintf(
-				"Tool %q blocked by VMAX large-edit safety: new_lines is too large for one safe edit (raw %d chars, %d lines; limits %d chars or %d lines). Do not stop after this rejection. Immediately retry with a smaller edit under 40 lines. Split the edit into smaller steps: insert a skeleton first, then fill one branch or helper at a time.",
+				"Tool %q blocked by %s: new_lines is too large for one safe edit (raw %d chars, %d lines; limits %d chars or %d lines). Do not stop after this rejection. Immediately retry with a smaller edit under 40 lines. Split the edit into smaller steps: insert a skeleton first, then fill one branch or helper at a time.",
 				toolName,
+				label,
 				rawLen,
 				lineCount,
-				vmaxEditFileMaxRawNewLinesChars,
-				vmaxEditFileMaxInsertedLines,
+				largeEditFileMaxRawNewLinesChars,
+				largeEditFileMaxInsertedLines,
 			)
 		}
 	case "edit_with_pattern":
@@ -1151,12 +1152,13 @@ func vmaxLargeEditSafetyBlock(opts RunOptions, toolName string, argsJSON []byte)
 		if err := json.Unmarshal(argsJSON, &args); err != nil {
 			return ""
 		}
-		if len(args.ReplaceWith) > vmaxEditWithPatternMaxReplacement {
+		if len(args.ReplaceWith) > largeEditWithPatternMaxReplacement {
 			return fmt.Sprintf(
-				"Tool %q blocked by VMAX large-edit safety: replace_with is too large for one safe edit (%d chars; limit %d chars). Do not stop after this rejection. Immediately retry with a smaller edit under 40 lines. Split the edit into smaller steps: insert a skeleton first, then fill one branch or helper at a time.",
+				"Tool %q blocked by %s: replace_with is too large for one safe edit (%d chars; limit %d chars). Do not stop after this rejection. Immediately retry with a smaller edit under 40 lines. Split the edit into smaller steps: insert a skeleton first, then fill one branch or helper at a time.",
 				toolName,
+				label,
 				len(args.ReplaceWith),
-				vmaxEditWithPatternMaxReplacement,
+				largeEditWithPatternMaxReplacement,
 			)
 		}
 	}
@@ -1190,8 +1192,8 @@ func semanticSafetyFailureKind(resultContent string) string {
 		return "omitted_tool_argument"
 	case strings.Contains(resultContent, "serialized list of code lines"):
 		return "serialized_code_line_list"
-	case strings.Contains(resultContent, "VMAX large-edit safety"):
-		return "vmax_large_edit"
+	case strings.Contains(resultContent, "large-edit safety"):
+		return "large_edit"
 	default:
 		return ""
 	}

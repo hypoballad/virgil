@@ -454,6 +454,55 @@ func TestVMaxLargeEditSafetyBlocksOversizedEditFile(t *testing.T) {
 	}
 }
 
+func TestLargeEditSafetyBlocksOversizedEditWithPatternInNormalMode(t *testing.T) {
+	largeReplacement := strings.Repeat("x", largeEditWithPatternMaxReplacement+1)
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_large_pattern_edit",
+							Function: llm.FunctionCall{
+								Name: "edit_with_pattern",
+								Arguments: map[string]interface{}{
+									"path":         "target.py",
+									"find_text":    "old",
+									"replace_with": largeReplacement,
+								},
+							},
+						},
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "stopped large edit"}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	editTool := &dummyTool{name: "edit_with_pattern", response: "should not run", isMutating: true}
+	registry.Register(editTool)
+	agentInst := New(mockLLM, registry)
+
+	resp, err := agentInst.Run(context.Background(), nil, "large edit")
+	if err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if editTool.calls != 0 {
+		t.Fatalf("edit_with_pattern should have been blocked before execution, calls=%d", editTool.calls)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Result == nil || !resp.ToolCalls[0].Result.IsError {
+		t.Fatalf("expected blocked tool result, got %#v", resp.ToolCalls)
+	}
+	if !strings.Contains(resp.ToolCalls[0].Result.Content, "large-edit safety") {
+		t.Fatalf("unexpected block message: %s", resp.ToolCalls[0].Result.Content)
+	}
+	if strings.Contains(resp.ToolCalls[0].Result.Content, "VMAX") {
+		t.Fatalf("normal mode block message should not mention VMAX: %s", resp.ToolCalls[0].Result.Content)
+	}
+}
+
 func TestRepeatedOmittedPlaceholderSafetyFailuresEscalate(t *testing.T) {
 	placeholder := tools.OmittedToolArgumentMarker + " different payload"
 	mockLLM := &mockLLM{
