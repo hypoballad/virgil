@@ -54,6 +54,7 @@ type dummyTool struct {
 	isMutating bool
 	calls      int
 	isError    bool
+	lastArgs   json.RawMessage
 }
 
 func (d *dummyTool) Name() string { return d.name }
@@ -72,6 +73,7 @@ func (d *dummyTool) Definition() tools.ToolDefinition {
 }
 func (d *dummyTool) Execute(ctx context.Context, args json.RawMessage) (*tools.Result, error) {
 	d.calls++
+	d.lastArgs = append(d.lastArgs[:0], args...)
 	if d.isError {
 		return tools.ErrorResult(d.response), nil
 	}
@@ -1476,6 +1478,9 @@ func TestCompactToolCallArgumentsOmitsLargeWriteContent(t *testing.T) {
 			t.Fatalf("compacted argument missing %q:\n%s", want, got)
 		}
 	}
+	if strings.Contains(got, "Preview:") {
+		t.Fatalf("compacted argument should not include a payload preview:\n%s", got)
+	}
 	if strings.Contains(got, strings.Repeat("report body\n", 100)) {
 		t.Fatalf("compacted argument retained too much content:\n%s", got)
 	}
@@ -1529,10 +1534,312 @@ func TestCompactToolCallArgumentsOmitsLargeEditArguments(t *testing.T) {
 	if !strings.Contains(replaceWith, "Tool: edit_with_pattern") || !strings.Contains(replaceWith, "Field: replace_with") {
 		t.Fatalf("edit_with_pattern replacement was not compacted:\n%s", replaceWith)
 	}
+	if strings.Contains(replaceWith, "Preview:") {
+		t.Fatalf("edit_with_pattern replacement should not include a payload preview:\n%s", replaceWith)
+	}
 	newLines := prepared[0].ToolCalls[1].Function.Arguments["new_lines"].(string)
 	if !strings.Contains(newLines, "Tool: edit_file") || !strings.Contains(newLines, "Field: new_lines") {
 		t.Fatalf("edit_file new_lines was not compacted:\n%s", newLines)
 	}
+	if strings.Contains(newLines, "Preview:") {
+		t.Fatalf("edit_file new_lines should not include a payload preview:\n%s", newLines)
+	}
+}
+
+func TestLargeToolArgumentsAreScrubbedFromHistoryAfterExecution(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		opts RunOptions
+	}{
+		{name: "normal", opts: RunOptions{MaxIterations: 3}},
+		{name: "vmax", opts: RunOptions{MaxIterations: VMaxIterations, AutoConfirmRunCommand: true, PreflightShrink: true}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			largeContent := strings.Repeat("generated report body\n", 120)
+			mockLLM := &mockLLM{
+				responses: []llm.ChatResponse{
+					{
+						Message: llm.Message{
+							Role: "assistant",
+							ToolCalls: []llm.ToolCall{
+								testToolCallWithArgs("write_file", map[string]interface{}{
+									"path":    "report.md",
+									"content": largeContent,
+								}),
+							},
+						},
+					},
+					{Message: llm.Message{Role: "assistant", Content: "done"}},
+				},
+			}
+
+			registry := tools.NewRegistry()
+			writeTool := &dummyTool{name: "write_file", response: "written", isMutating: true}
+			registry.Register(writeTool)
+			agentInst := New(mockLLM, registry)
+
+			resp, err := agentInst.RunWithOptions(context.Background(), nil, "write report", tt.opts)
+			if err != nil {
+				t.Fatalf("RunWithOptions error = %v", err)
+			}
+			if resp.FinalContent != "done" {
+				t.Fatalf("FinalContent = %q", resp.FinalContent)
+			}
+			if writeTool.calls != 1 {
+				t.Fatalf("write_file calls=%d, want 1", writeTool.calls)
+			}
+			var executedArgs struct {
+				Content string `json:"content"`
+			}
+			if err := json.Unmarshal(writeTool.lastArgs, &executedArgs); err != nil {
+				t.Fatalf("failed to unmarshal executed args: %v", err)
+			}
+			if executedArgs.Content != largeContent {
+				t.Fatalf("tool execution did not receive raw content")
+			}
+
+			assertHistoryHasScrubbedWriteContent(t, resp.Messages, largeContent)
+			if len(mockLLM.requests) < 2 {
+				t.Fatalf("expected second request after write_file")
+			}
+			assertHistoryHasScrubbedWriteContent(t, mockLLM.requests[1].Messages, largeContent)
+		})
+	}
+}
+
+func TestLargeEditArgumentsUnderSafetyLimitAreScrubbedFromHistoryAfterExecution(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		toolName       string
+		args           map[string]interface{}
+		assertScrubbed func(t *testing.T, args map[string]interface{}, raw string)
+		assertExecuted func(t *testing.T, raw json.RawMessage, expected string)
+		rawPayload     string
+	}{
+		{
+			name:       "edit_with_pattern",
+			toolName:   "edit_with_pattern",
+			rawPayload: strings.Repeat("replacement line\n", 100),
+			args: map[string]interface{}{
+				"path":      "target.py",
+				"find_text": "old",
+			},
+			assertScrubbed: func(t *testing.T, args map[string]interface{}, raw string) {
+				t.Helper()
+				got, ok := args["replace_with"].(string)
+				if !ok || !strings.Contains(got, "discarded") {
+					t.Fatalf("replace_with was not scrubbed: %#v", args)
+				}
+				if strings.Contains(got, raw) {
+					t.Fatalf("replace_with retained raw payload")
+				}
+			},
+			assertExecuted: func(t *testing.T, raw json.RawMessage, expected string) {
+				t.Helper()
+				var got struct {
+					ReplaceWith string `json:"replace_with"`
+				}
+				if err := json.Unmarshal(raw, &got); err != nil {
+					t.Fatalf("failed to unmarshal executed args: %v", err)
+				}
+				if got.ReplaceWith != expected {
+					t.Fatalf("tool execution did not receive raw replacement")
+				}
+			},
+		},
+		{
+			name:       "edit_file",
+			toolName:   "edit_file",
+			rawPayload: strings.Repeat("new line body\n", 120),
+			args: map[string]interface{}{
+				"path":       "target.py",
+				"start_line": 10,
+				"end_line":   12,
+			},
+			assertScrubbed: func(t *testing.T, args map[string]interface{}, raw string) {
+				t.Helper()
+				got, ok := args["new_lines"].([]interface{})
+				if !ok || len(got) != 1 || !strings.Contains(fmt.Sprint(got[0]), "discarded") {
+					t.Fatalf("new_lines was not scrubbed: %#v", args)
+				}
+				if strings.Contains(fmt.Sprint(got), raw) {
+					t.Fatalf("new_lines retained raw payload")
+				}
+			},
+			assertExecuted: func(t *testing.T, raw json.RawMessage, expected string) {
+				t.Helper()
+				var got struct {
+					NewLines []string `json:"new_lines"`
+				}
+				if err := json.Unmarshal(raw, &got); err != nil {
+					t.Fatalf("failed to unmarshal executed args: %v", err)
+				}
+				if len(got.NewLines) != 1 || got.NewLines[0] != expected {
+					t.Fatalf("tool execution did not receive raw new_lines")
+				}
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			args := cloneMap(tt.args)
+			if tt.toolName == "edit_file" {
+				args["new_lines"] = []interface{}{tt.rawPayload}
+			} else {
+				args["replace_with"] = tt.rawPayload
+			}
+			mockLLM := &mockLLM{
+				responses: []llm.ChatResponse{
+					{
+						Message: llm.Message{
+							Role:      "assistant",
+							ToolCalls: []llm.ToolCall{testToolCallWithArgs(tt.toolName, args)},
+						},
+					},
+					{Message: llm.Message{Role: "assistant", Content: "done"}},
+				},
+			}
+
+			registry := tools.NewRegistry()
+			editTool := &dummyTool{name: tt.toolName, response: "edited", isMutating: true}
+			registry.Register(editTool)
+			agentInst := New(mockLLM, registry)
+
+			resp, err := agentInst.RunWithOptions(context.Background(), nil, "edit target", RunOptions{MaxIterations: 3})
+			if err != nil {
+				t.Fatalf("RunWithOptions error = %v", err)
+			}
+			if editTool.calls != 1 {
+				t.Fatalf("%s calls=%d, want 1", tt.toolName, editTool.calls)
+			}
+			tt.assertExecuted(t, editTool.lastArgs, tt.rawPayload)
+			assertHistoryHasScrubbedToolArgument(t, resp.Messages, tt.toolName, tt.rawPayload, tt.assertScrubbed)
+			if len(mockLLM.requests) < 2 {
+				t.Fatalf("expected second request after %s", tt.toolName)
+			}
+			assertHistoryHasScrubbedToolArgument(t, mockLLM.requests[1].Messages, tt.toolName, tt.rawPayload, tt.assertScrubbed)
+		})
+	}
+}
+
+func assertHistoryHasScrubbedToolArgument(t *testing.T, messages []llm.Message, toolName string, rawPayload string, assertScrubbed func(*testing.T, map[string]interface{}, string)) {
+	t.Helper()
+	found := false
+	for _, msg := range messages {
+		for _, tc := range msg.ToolCalls {
+			if tc.Function.Name != toolName {
+				continue
+			}
+			found = true
+			if _, ok := tc.Function.Arguments["_discarded_tool_arguments"]; !ok {
+				t.Fatalf("%s history missing discard metadata: %#v", toolName, tc.Function.Arguments)
+			}
+			assertScrubMetadata(t, tc.Function.Arguments, rawPayload)
+			assertScrubbed(t, tc.Function.Arguments, rawPayload)
+		}
+	}
+	if !found {
+		t.Fatalf("%s tool call not found in history", toolName)
+	}
+}
+
+func assertHistoryHasScrubbedWriteContent(t *testing.T, messages []llm.Message, rawContent string) {
+	t.Helper()
+	found := false
+	for _, msg := range messages {
+		for _, tc := range msg.ToolCalls {
+			if tc.Function.Name != "write_file" {
+				continue
+			}
+			found = true
+			content, ok := tc.Function.Arguments["content"].(string)
+			if !ok {
+				t.Fatalf("write_file content missing from scrubbed history: %#v", tc.Function.Arguments)
+			}
+			if strings.Contains(content, rawContent) {
+				t.Fatalf("write_file history retained raw content")
+			}
+			if !strings.Contains(content, "discarded") {
+				t.Fatalf("write_file history content was not scrubbed: %q", content)
+			}
+			if _, ok := tc.Function.Arguments["_discarded_tool_arguments"]; !ok {
+				t.Fatalf("write_file history missing discard metadata: %#v", tc.Function.Arguments)
+			}
+			assertScrubMetadata(t, tc.Function.Arguments, rawContent)
+		}
+	}
+	if !found {
+		t.Fatalf("write_file tool call not found in history")
+	}
+}
+
+func assertScrubMetadata(t *testing.T, args map[string]interface{}, rawPayload string) {
+	t.Helper()
+	metadata, ok := args["_scrubbed_tool_arguments"].([]map[string]interface{})
+	if !ok || len(metadata) == 0 {
+		t.Fatalf("scrub metadata missing: %#v", args)
+	}
+	found := false
+	for _, item := range metadata {
+		if item["original_chars"] == len(rawPayload) {
+			found = true
+		}
+		if _, ok := item["sha256"].(string); !ok {
+			t.Fatalf("scrub metadata missing sha256: %#v", item)
+		}
+		if _, ok := item["field"].(string); !ok {
+			t.Fatalf("scrub metadata missing field: %#v", item)
+		}
+		if _, ok := item["reason"].(string); !ok {
+			t.Fatalf("scrub metadata missing reason: %#v", item)
+		}
+		if _, ok := item["original_lines"].(int); !ok {
+			t.Fatalf("scrub metadata missing original_lines: %#v", item)
+		}
+	}
+	if !found {
+		t.Fatalf("scrub metadata did not record raw payload size %d: %#v", len(rawPayload), metadata)
+	}
+}
+
+func TestRunBtwScrubsLargeToolArgumentsFromHistory(t *testing.T) {
+	largeContent := strings.Repeat("btw generated body\n", 120)
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						testToolCallWithArgs("write_file", map[string]interface{}{
+							"path":    "btw.md",
+							"content": largeContent,
+						}),
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "blocked"}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	writeTool := &dummyTool{name: "write_file", response: "should not run", isMutating: true}
+	registry.Register(writeTool)
+	agentInst := New(mockLLM, registry)
+
+	resp, err := agentInst.RunBtw(context.Background(), nil, "try writing")
+	if err != nil {
+		t.Fatalf("RunBtw error = %v", err)
+	}
+	if resp.FinalContent != "blocked" {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+	if writeTool.calls != 0 {
+		t.Fatalf("write_file should be blocked in /btw mode, calls=%d", writeTool.calls)
+	}
+	if len(mockLLM.requests) < 2 {
+		t.Fatalf("expected second request after blocked /btw tool call")
+	}
+	assertHistoryHasScrubbedWriteContent(t, mockLLM.requests[1].Messages, largeContent)
+	assertHistoryHasScrubbedWriteContent(t, resp.Messages, largeContent)
 }
 
 func TestAgentSendsCompactedToolResultsToNextLLMCall(t *testing.T) {

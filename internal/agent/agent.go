@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -556,7 +558,7 @@ func (a *Agent) RunBtw(ctx context.Context, history []llm.Message, question stri
 
 		toolCalls := a.limitToolCallsPerIteration(chatResp.Message.ToolCalls)
 		chatResp.Message.ToolCalls = toolCalls
-		messages = append(messages, chatResp.Message)
+		messages = append(messages, scrubLargeToolCallArgumentsForHistory(chatResp.Message))
 
 		for _, tc := range toolCalls {
 			argsJSON, _ := tc.Function.ArgumentsJSON()
@@ -596,6 +598,7 @@ func (a *Agent) RunBtw(ctx context.Context, history []llm.Message, question stri
 				Error:      execErr,
 			})
 		}
+		response.Messages = messages
 	}
 
 	return response, nil
@@ -826,7 +829,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 		chatResp.Message.ToolCalls = toolCalls
 
 		// assistantメッセージ（tool_calls含む）を履歴に追加
-		messages = append(messages, chatResp.Message)
+		messages = append(messages, scrubLargeToolCallArgumentsForHistory(chatResp.Message))
 
 		// 各ツールを順次実行（制限後のリストを使う）
 		for _, tc := range toolCalls {
@@ -1344,10 +1347,76 @@ func scrubToolCallArguments(messages []llm.Message, toolCallID string, reason st
 	return messages
 }
 
+func scrubLargeToolCallArgumentsForHistory(msg llm.Message) llm.Message {
+	if msg.Role != "assistant" || len(msg.ToolCalls) == 0 {
+		return msg
+	}
+	toolCalls := make([]llm.ToolCall, len(msg.ToolCalls))
+	copy(toolCalls, msg.ToolCalls)
+	changed := false
+	for i, tc := range toolCalls {
+		if !hasLargeHistoryArgument(tc.Function.Name, tc.Function.Arguments) &&
+			!tools.ContainsOmittedToolArgument(tc.Function.Arguments) {
+			continue
+		}
+		tc.Function.Arguments = scrubbedToolArguments(tc.Function.Name, tc.Function.Arguments, "large or unsafe tool payload was discarded before saving conversation history")
+		toolCalls[i] = tc
+		changed = true
+	}
+	if !changed {
+		return msg
+	}
+	msg.ToolCalls = toolCalls
+	return msg
+}
+
+func hasLargeHistoryArgument(toolName string, args map[string]interface{}) bool {
+	for _, field := range compactibleArgumentFields(toolName) {
+		value, ok := args[field]
+		if !ok {
+			continue
+		}
+		if argumentValueLength(value) > toolArgumentCompactionChars {
+			return true
+		}
+	}
+	return false
+}
+
+func argumentValueLength(value interface{}) int {
+	text, ok := argumentValueText(value)
+	if !ok {
+		return 0
+	}
+	return len(text)
+}
+
+func argumentValueText(value interface{}) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		return v, true
+	case []string:
+		return strings.Join(v, "\n"), true
+	case []interface{}:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				return "", false
+			}
+			parts = append(parts, s)
+		}
+		return strings.Join(parts, "\n"), true
+	default:
+		return "", false
+	}
+}
+
 func scrubbedToolArguments(toolName string, args map[string]interface{}, reason string) map[string]interface{} {
 	out := map[string]interface{}{
 		"_discarded_tool_arguments": reason,
 		"_instruction":              "Do not reuse this historical tool payload. Use a structural read of the current target (read_symbol/get_file_outline/get_symbol_outline, or narrow read_file fallback) before creating a semantic edit from current source.",
+		"_scrubbed_tool_arguments":  scrubbedToolArgumentMetadata(toolName, args, reason),
 	}
 	if path, ok := args["path"]; ok {
 		out["path"] = path
@@ -1364,8 +1433,37 @@ func scrubbedToolArguments(toolName string, args map[string]interface{}, reason 
 	case "edit_with_pattern":
 		out["find_text"] = "[discarded unsafe find_text payload; do not reuse]"
 		out["replace_with"] = "[discarded large or unsafe replacement payload; do not reuse; perform a structural read and create a semantic edit from current source]"
+	case "write_file":
+		out["content"] = "[discarded large or unsafe file content payload; do not reuse; perform a structural read before creating a new semantic edit]"
 	}
 	return out
+}
+
+func scrubbedToolArgumentMetadata(toolName string, args map[string]interface{}, reason string) []map[string]interface{} {
+	fields := compactibleArgumentFields(toolName)
+	if len(fields) == 0 {
+		return nil
+	}
+	metadata := make([]map[string]interface{}, 0, len(fields))
+	for _, field := range fields {
+		value, ok := args[field]
+		if !ok {
+			continue
+		}
+		text, ok := argumentValueText(value)
+		if !ok {
+			continue
+		}
+		sum := sha256.Sum256([]byte(text))
+		metadata = append(metadata, map[string]interface{}{
+			"field":          field,
+			"reason":         reason,
+			"original_chars": len(text),
+			"original_lines": strings.Count(text, "\n") + 1,
+			"sha256":         hex.EncodeToString(sum[:]),
+		})
+	}
+	return metadata
 }
 
 func truncateForStopDetail(s string, max int) string {
@@ -2035,13 +2133,12 @@ func compactArgumentValue(toolName, field string, value interface{}) (interface{
 
 func compactArgumentString(toolName, field, value string) string {
 	return fmt.Sprintf(
-		tools.OmittedToolArgumentMarker+"\nThis is an internal context-compaction placeholder, not executable file content. Do not copy it into future tool calls or infer current file state from the preview. Use a structural read of the current target before creating a new %s argument.\nTool: %s\nField: %s\nOriginal chars: %d\nOriginal estimated tokens: %d\nPreview: %s",
+		tools.OmittedToolArgumentMarker+"\nThis is an internal context-compaction placeholder, not executable file content. Do not copy it into future tool calls or infer current file state from this placeholder. Use a structural read of the current target before creating a new %s argument.\nTool: %s\nField: %s\nOriginal chars: %d\nOriginal estimated tokens: %d",
 		field,
 		toolName,
 		field,
 		len(value),
 		tokenizer.EstimateTokens(value),
-		compactTextPreview(value),
 	)
 }
 
