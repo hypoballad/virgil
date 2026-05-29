@@ -373,9 +373,9 @@ func TestSplitMessagesForPreflightShrinkKeepsToolPair(t *testing.T) {
 }
 
 func TestVMaxLargeEditSafetyBlocksOversizedEditFile(t *testing.T) {
-	largeLines := make([]interface{}, 0, 90)
-	for i := 0; i < 90; i++ {
-		largeLines = append(largeLines, fmt.Sprintf("line %d", i))
+	largeLines := make([]interface{}, 0, 10)
+	for i := 0; i < 10; i++ {
+		largeLines = append(largeLines, fmt.Sprintf("line %d %s", i, strings.Repeat("x", 700)))
 	}
 	mockLLM := &mockLLM{
 		responses: []llm.ChatResponse{
@@ -444,8 +444,8 @@ func TestVMaxLargeEditSafetyBlocksOversizedEditFile(t *testing.T) {
 	if !strings.Contains(resp.ToolCalls[0].Result.Content, "VMAX large-edit safety") {
 		t.Fatalf("unexpected block message: %s", resp.ToolCalls[0].Result.Content)
 	}
-	if !strings.Contains(resp.ToolCalls[0].Result.Content, "under 40 lines") {
-		t.Fatalf("block message should ask for under 40 lines: %s", resp.ToolCalls[0].Result.Content)
+	if !strings.Contains(resp.ToolCalls[0].Result.Content, "structural read") {
+		t.Fatalf("block message should ask for structural read: %s", resp.ToolCalls[0].Result.Content)
 	}
 	if len(mockLLM.requests) < 2 {
 		t.Fatalf("expected second request after blocked edit")

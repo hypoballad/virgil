@@ -37,7 +37,6 @@ const preflightShrinkRecentMessages = 8
 
 const (
 	largeEditFileMaxRawNewLinesChars   = 6000
-	largeEditFileMaxInsertedLines      = 80
 	largeEditWithPatternMaxReplacement = 6000
 	maxSemanticSafetyFailuresPerRun    = 2
 )
@@ -1186,16 +1185,13 @@ func largeEditSafetyBlock(opts RunOptions, toolName string, argsJSON []byte) str
 			return ""
 		}
 		rawLen := len(args.NewLines)
-		lineCount := rawNewLinesCount(args.NewLines)
-		if rawLen > largeEditFileMaxRawNewLinesChars || lineCount > largeEditFileMaxInsertedLines {
+		if rawLen > largeEditFileMaxRawNewLinesChars {
 			return fmt.Sprintf(
-				"Tool %q blocked by %s: new_lines is too large for one safe edit (raw %d chars, %d lines; limits %d chars or %d lines). Do not stop after this rejection. Immediately retry with a smaller edit under 40 lines. Split the edit into smaller steps: insert a skeleton first, then fill one branch or helper at a time.",
+				"Tool %q blocked by %s: new_lines is too large for one safe edit (raw %d chars; limit %d chars). Do not retry by chunking the same payload. Use a structural read of the current target, then choose the smallest semantic edit from the current source.",
 				toolName,
 				label,
 				rawLen,
-				lineCount,
 				largeEditFileMaxRawNewLinesChars,
-				largeEditFileMaxInsertedLines,
 			)
 		}
 	case "edit_with_pattern":
@@ -1207,7 +1203,7 @@ func largeEditSafetyBlock(opts RunOptions, toolName string, argsJSON []byte) str
 		}
 		if len(args.ReplaceWith) > largeEditWithPatternMaxReplacement {
 			return fmt.Sprintf(
-				"Tool %q blocked by %s: replace_with is too large for one safe edit (%d chars; limit %d chars). Do not stop after this rejection. Immediately retry with a smaller edit under 40 lines. Split the edit into smaller steps: insert a skeleton first, then fill one branch or helper at a time.",
+				"Tool %q blocked by %s: replace_with is too large for one safe edit (%d chars; limit %d chars). Do not retry by chunking the same payload. Use a structural read of the current target, then choose the smallest semantic edit from the current source.",
 				toolName,
 				label,
 				len(args.ReplaceWith),
@@ -1286,25 +1282,6 @@ func isStructuralReadToolCall(toolName string, argsJSON []byte) bool {
 	}
 }
 
-func rawNewLinesCount(raw json.RawMessage) int {
-	var asArray []string
-	if err := json.Unmarshal(raw, &asArray); err == nil {
-		return len(asArray)
-	}
-	var asString string
-	if err := json.Unmarshal(raw, &asString); err == nil {
-		if asString == "" {
-			return 0
-		}
-		lines := strings.Split(asString, "\n")
-		if len(lines) > 0 && lines[len(lines)-1] == "" {
-			lines = lines[:len(lines)-1]
-		}
-		return len(lines)
-	}
-	return 0
-}
-
 func semanticSafetyFailureKind(resultContent string) string {
 	switch {
 	case strings.Contains(resultContent, tools.OmittedToolArgumentError()) ||
@@ -1370,7 +1347,7 @@ func scrubToolCallArguments(messages []llm.Message, toolCallID string, reason st
 func scrubbedToolArguments(toolName string, args map[string]interface{}, reason string) map[string]interface{} {
 	out := map[string]interface{}{
 		"_discarded_tool_arguments": reason,
-		"_instruction":              "Do not reuse this historical tool payload. Use a structural read of the current target (read_symbol/get_file_outline/get_symbol_outline, or narrow read_file fallback) before creating a new smaller tool call.",
+		"_instruction":              "Do not reuse this historical tool payload. Use a structural read of the current target (read_symbol/get_file_outline/get_symbol_outline, or narrow read_file fallback) before creating a semantic edit from current source.",
 	}
 	if path, ok := args["path"]; ok {
 		out["path"] = path
@@ -1383,10 +1360,10 @@ func scrubbedToolArguments(toolName string, args map[string]interface{}, reason 
 		if endLine, ok := args["end_line"]; ok {
 			out["end_line"] = endLine
 		}
-		out["new_lines"] = []interface{}{"[discarded large or unsafe edit payload; do not reuse; create a new smaller edit under 40 lines]"}
+		out["new_lines"] = []interface{}{"[discarded large or unsafe edit payload; do not reuse; perform a structural read and create a semantic edit from current source]"}
 	case "edit_with_pattern":
 		out["find_text"] = "[discarded unsafe find_text payload; do not reuse]"
-		out["replace_with"] = "[discarded large or unsafe replacement payload; do not reuse; create a new smaller edit under 40 lines]"
+		out["replace_with"] = "[discarded large or unsafe replacement payload; do not reuse; perform a structural read and create a semantic edit from current source]"
 	}
 	return out
 }
