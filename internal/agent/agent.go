@@ -669,6 +669,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 	verificationSucceeded := false
 	lastPreflightShrinkIteration := -1000000
 	semanticSafetyFailures := map[string]int{}
+	structuralRecovery := structuralReadRecovery{}
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
 		log.Printf("agent: iteration %d/%d, %d messages", iteration+1, maxIterations, len(messages))
@@ -783,6 +784,16 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 		// tool_callsがなければ最終応答
 		if len(chatResp.Message.ToolCalls) == 0 {
 			content := chatResp.Message.Content
+			if structuralRecovery.Required {
+				log.Printf("agent: final response blocked until structural read after safety guard")
+				messages = append(messages, chatResp.Message)
+				messages = append(messages, llm.Message{
+					Role:    "user",
+					Content: structuralRecoveryFinalPrompt(structuralRecovery.Reason),
+				})
+				response.Messages = messages
+				continue
+			}
 			if systemPromptOverride != "" && isIncompleteTaskTemplateResponse(content) {
 				log.Printf("agent: task template response stopped after TODO list; prompting model to continue")
 				messages = append(messages, chatResp.Message)
@@ -863,7 +874,8 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 			if tools.ContainsOmittedToolArgument(tc.Function.Arguments) {
 				blockMsg := fmt.Sprintf("Tool %q blocked: %s", tc.Function.Name, tools.OmittedToolArgumentError())
 				log.Printf("agent: %s", blockMsg)
-				messages = scrubToolCallArguments(messages, tc.ID, "omitted tool argument payload was discarded; re-read source and regenerate a small real edit")
+				structuralRecovery.Require("an omitted tool argument placeholder was rejected")
+				messages = scrubToolCallArguments(messages, tc.ID, "omitted tool argument payload was discarded; use a structural read before regenerating a small real edit")
 				record.Result = &tools.Result{
 					IsError: true,
 					Content: blockMsg,
@@ -892,7 +904,8 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 
 			if blockMsg := largeEditSafetyBlock(opts, tc.Function.Name, argsJSON); blockMsg != "" {
 				log.Printf("agent: %s", blockMsg)
-				messages = scrubToolCallArguments(messages, tc.ID, "large edit payload was discarded; immediately retry with a smaller edit under the limit")
+				structuralRecovery.Require("a large edit was blocked and its payload was discarded")
+				messages = scrubToolCallArguments(messages, tc.ID, "large edit payload was discarded; use a structural read before regenerating a smaller edit")
 				record.Result = &tools.Result{
 					IsError: true,
 					Content: blockMsg,
@@ -921,6 +934,37 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 
 			// ツール取得
 			tool, exists := a.tools.Get(tc.Function.Name)
+			toolIsMutating := exists && tool.IsMutating()
+
+			if structuralRecovery.Required && toolIsMutating {
+				blockMsg := structuralRecoveryMutatingToolBlock(tc.Function.Name, structuralRecovery.Reason)
+				log.Printf("agent: %s", blockMsg)
+				messages = scrubToolCallArguments(messages, tc.ID, "mutating tool blocked until structural read confirms current file state")
+				record.Result = &tools.Result{
+					IsError: true,
+					Content: blockMsg,
+				}
+				record.Error = nil
+				response.ToolCalls = append(response.ToolCalls, record)
+				messages = append(messages, llm.Message{
+					Role:       "tool",
+					Content:    blockMsg,
+					ToolCallID: tc.ID,
+				})
+				a.emitProgress(ProgressEvent{
+					Type:            EventAgentActivity,
+					ActivityMessage: fmt.Sprintf("Warning: ⚠️ %s blocked", tc.Function.Name),
+				})
+				if signal := a.watchdog.RecordToolFailure(tc.Function.Name, argsJSON, blockMsg); signal != nil {
+					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
+					return a.escalate(ctx, messages, response, signal)
+				}
+				if signal := recordSemanticSafetyFailure(semanticSafetyFailures, "structural_read_required", tc.Function.Name, blockMsg); signal != nil {
+					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
+					return a.escalate(ctx, messages, response, signal)
+				}
+				continue
+			}
 
 			if exists && tc.Function.Name == "run_command" && !opts.AutoConfirmRunCommand {
 				var runArgs struct {
@@ -943,7 +987,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 			}
 
 			// プランモード時の書き込み系ツールブロック
-			if a.planMode && exists && tool.IsMutating() {
+			if a.planMode && toolIsMutating {
 				log.Printf("agent: BLOCKED write tool %q in plan mode", tc.Function.Name)
 				blockMsg := fmt.Sprintf(
 					"Tool %q is disabled in PLAN mode. "+
@@ -972,7 +1016,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 
 			// 書き込み系ツールのチェックとpre-commit
 			isMutating := false
-			if exists && tool.IsMutating() && a.shadow != nil {
+			if toolIsMutating && a.shadow != nil {
 				isMutating = true
 				shadowCtx, shadowCancel := context.WithTimeout(ctx, ShadowOperationTimeout)
 				preHash, err := a.shadow.CommitPre(shadowCtx, tc.Function.Name)
@@ -1090,8 +1134,17 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 						return a.escalate(ctx, messages, response, signal)
 					}
 				}
-			} else if tc.Function.Name == "run_tests" {
-				verificationSucceeded = true
+			} else {
+				if structuralRecovery.Required && isStructuralReadToolCall(tc.Function.Name, argsJSON) {
+					log.Printf("agent: structural read recovery satisfied by %s", tc.Function.Name)
+					structuralRecovery.ClearAfterStructuralRead()
+				} else if structuralRecovery.VerifyAfterNextEdit && toolIsMutating {
+					structuralRecovery.RequirePostEditVerification()
+					log.Printf("agent: structural post-edit verification required after %s", tc.Function.Name)
+				}
+				if tc.Function.Name == "run_tests" {
+					verificationSucceeded = true
+				}
 			}
 		}
 
@@ -1166,6 +1219,73 @@ func largeEditSafetyBlock(opts RunOptions, toolName string, argsJSON []byte) str
 	return ""
 }
 
+type structuralReadRecovery struct {
+	Required             bool
+	Reason               string
+	PostEditVerification bool
+	VerifyAfterNextEdit  bool
+}
+
+func (r *structuralReadRecovery) Require(reason string) {
+	r.Required = true
+	r.Reason = reason
+	r.PostEditVerification = false
+	r.VerifyAfterNextEdit = false
+}
+
+func (r *structuralReadRecovery) RequirePostEditVerification() {
+	r.Required = true
+	r.Reason = "a follow-up edit was applied after structural recovery and needs structural verification"
+	r.PostEditVerification = true
+	r.VerifyAfterNextEdit = false
+}
+
+func (r *structuralReadRecovery) ClearAfterStructuralRead() {
+	verifyAfterNextEdit := r.Required && !r.PostEditVerification
+	r.Required = false
+	r.Reason = ""
+	r.PostEditVerification = false
+	r.VerifyAfterNextEdit = verifyAfterNextEdit
+}
+
+func structuralRecoveryFinalPrompt(reason string) string {
+	return "Do not finish yet. " + structuralRecoveryInstruction(reason)
+}
+
+func structuralRecoveryMutatingToolBlock(toolName, reason string) string {
+	return fmt.Sprintf("Tool %q blocked: %s", toolName, structuralRecoveryInstruction(reason))
+}
+
+func structuralRecoveryInstruction(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "a previous safety guard discarded or omitted edit context"
+	}
+	return fmt.Sprintf(
+		"%s. Do not infer current file state from omitted previews or prior intent. "+
+			"Before any further edit or final report, perform a structural read of the current target: prefer read_symbol, get_file_outline, or get_symbol_outline for supported code files; otherwise use read_file with a narrow line range. After that read succeeds, regenerate the next edit from the current source.",
+		reason,
+	)
+}
+
+func isStructuralReadToolCall(toolName string, argsJSON []byte) bool {
+	switch toolName {
+	case "read_symbol", "get_file_outline", "get_symbol_outline":
+		return true
+	case "read_file":
+		var args struct {
+			StartLine int `json:"start_line"`
+			EndLine   int `json:"end_line"`
+		}
+		if err := json.Unmarshal(argsJSON, &args); err != nil {
+			return false
+		}
+		return args.StartLine > 0 && args.EndLine >= args.StartLine && args.EndLine-args.StartLine <= 200
+	default:
+		return false
+	}
+}
+
 func rawNewLinesCount(raw json.RawMessage) int {
 	var asArray []string
 	if err := json.Unmarshal(raw, &asArray); err == nil {
@@ -1211,7 +1331,7 @@ func recordSemanticSafetyFailure(counts map[string]int, kind string, toolName st
 	return &StopSignal{
 		Reason: StopReasonLoopDetected,
 		Detail: fmt.Sprintf(
-			"tool %q hit safety guard %q %d times in this run. Stop retrying the same large or omitted edit payload; re-read the source and split the edit into smaller steps. Last error: %s",
+			"tool %q hit safety guard %q %d times in this run. Stop retrying the same large or omitted edit payload; use a structural read of the current target, then split the edit into smaller steps. Last error: %s",
 			toolName,
 			kind,
 			counts[key],
@@ -1250,7 +1370,7 @@ func scrubToolCallArguments(messages []llm.Message, toolCallID string, reason st
 func scrubbedToolArguments(toolName string, args map[string]interface{}, reason string) map[string]interface{} {
 	out := map[string]interface{}{
 		"_discarded_tool_arguments": reason,
-		"_instruction":              "Do not reuse this historical tool payload. Re-read the source and create a new smaller tool call.",
+		"_instruction":              "Do not reuse this historical tool payload. Use a structural read of the current target (read_symbol/get_file_outline/get_symbol_outline, or narrow read_file fallback) before creating a new smaller tool call.",
 	}
 	if path, ok := args["path"]; ok {
 		out["path"] = path
@@ -1938,7 +2058,7 @@ func compactArgumentValue(toolName, field string, value interface{}) (interface{
 
 func compactArgumentString(toolName, field, value string) string {
 	return fmt.Sprintf(
-		tools.OmittedToolArgumentMarker+"\nThis is an internal context-compaction placeholder, not executable file content. Do not copy it into future tool calls; re-read the source and provide the real %s argument.\nTool: %s\nField: %s\nOriginal chars: %d\nOriginal estimated tokens: %d\nPreview: %s",
+		tools.OmittedToolArgumentMarker+"\nThis is an internal context-compaction placeholder, not executable file content. Do not copy it into future tool calls or infer current file state from the preview. Use a structural read of the current target before creating a new %s argument.\nTool: %s\nField: %s\nOriginal chars: %d\nOriginal estimated tokens: %d\nPreview: %s",
 		field,
 		toolName,
 		field,

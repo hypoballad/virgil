@@ -77,6 +77,8 @@ If find_text is not unique, include MORE context:
 After any edit, the file is automatically syntax-checked.
 If syntax breaks, you'll see a warning. Use /rewind to undo if needed.
 
+If a large edit or omitted tool argument is rejected, do not infer current file state from the omitted preview or prior intent. Before the next edit or final report, re-read the current target structurally: prefer read_symbol, get_file_outline, or get_symbol_outline for supported code files; otherwise use read_file with a narrow line range.
+
 # Workspace
 
 Your workspace root is: %WORKSPACE_ROOT%

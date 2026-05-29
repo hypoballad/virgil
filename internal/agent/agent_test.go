@@ -399,12 +399,32 @@ func TestVMaxLargeEditSafetyBlocksOversizedEditFile(t *testing.T) {
 				},
 			},
 			{Message: llm.Message{Role: "assistant", Content: "stopped large edit"}},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_structural_read",
+							Function: llm.FunctionCall{
+								Name: "read_symbol",
+								Arguments: map[string]interface{}{
+									"path":        "target.py",
+									"symbol_name": "Target",
+								},
+							},
+						},
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "stopped large edit after read"}},
 		},
 	}
 
 	registry := tools.NewRegistry()
 	editTool := &dummyTool{name: "edit_file", response: "should not run", isMutating: true}
+	readTool := &dummyTool{name: "read_symbol", response: "symbol source", isMutating: false}
 	registry.Register(editTool)
+	registry.Register(readTool)
 	agentInst := New(mockLLM, registry)
 
 	resp, err := agentInst.RunWithOptions(context.Background(), nil, "large edit", RunOptions{
@@ -418,7 +438,7 @@ func TestVMaxLargeEditSafetyBlocksOversizedEditFile(t *testing.T) {
 	if editTool.calls != 0 {
 		t.Fatalf("edit_file should have been blocked before execution, calls=%d", editTool.calls)
 	}
-	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Result == nil || !resp.ToolCalls[0].Result.IsError {
+	if len(resp.ToolCalls) < 1 || resp.ToolCalls[0].Result == nil || !resp.ToolCalls[0].Result.IsError {
 		t.Fatalf("expected blocked tool result, got %#v", resp.ToolCalls)
 	}
 	if !strings.Contains(resp.ToolCalls[0].Result.Content, "VMAX large-edit safety") {
@@ -477,12 +497,32 @@ func TestLargeEditSafetyBlocksOversizedEditWithPatternInNormalMode(t *testing.T)
 				},
 			},
 			{Message: llm.Message{Role: "assistant", Content: "stopped large edit"}},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_structural_read",
+							Function: llm.FunctionCall{
+								Name: "read_symbol",
+								Arguments: map[string]interface{}{
+									"path":        "target.py",
+									"symbol_name": "Target",
+								},
+							},
+						},
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "stopped large edit after read"}},
 		},
 	}
 
 	registry := tools.NewRegistry()
 	editTool := &dummyTool{name: "edit_with_pattern", response: "should not run", isMutating: true}
+	readTool := &dummyTool{name: "read_symbol", response: "symbol source", isMutating: false}
 	registry.Register(editTool)
+	registry.Register(readTool)
 	agentInst := New(mockLLM, registry)
 
 	resp, err := agentInst.Run(context.Background(), nil, "large edit")
@@ -492,7 +532,7 @@ func TestLargeEditSafetyBlocksOversizedEditWithPatternInNormalMode(t *testing.T)
 	if editTool.calls != 0 {
 		t.Fatalf("edit_with_pattern should have been blocked before execution, calls=%d", editTool.calls)
 	}
-	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Result == nil || !resp.ToolCalls[0].Result.IsError {
+	if len(resp.ToolCalls) < 1 || resp.ToolCalls[0].Result == nil || !resp.ToolCalls[0].Result.IsError {
 		t.Fatalf("expected blocked tool result, got %#v", resp.ToolCalls)
 	}
 	if !strings.Contains(resp.ToolCalls[0].Result.Content, "large-edit safety") {
@@ -500,6 +540,142 @@ func TestLargeEditSafetyBlocksOversizedEditWithPatternInNormalMode(t *testing.T)
 	}
 	if strings.Contains(resp.ToolCalls[0].Result.Content, "VMAX") {
 		t.Fatalf("normal mode block message should not mention VMAX: %s", resp.ToolCalls[0].Result.Content)
+	}
+}
+
+func TestLargeEditRequiresStructuralReadBeforeFurtherEditOrFinal(t *testing.T) {
+	largeReplacement := strings.Repeat("x", largeEditWithPatternMaxReplacement+1)
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_large_pattern_edit",
+							Function: llm.FunctionCall{
+								Name: "edit_with_pattern",
+								Arguments: map[string]interface{}{
+									"path":         "target.py",
+									"find_text":    "old",
+									"replace_with": largeReplacement,
+								},
+							},
+						},
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "done without reread"}},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_direct_retry",
+							Function: llm.FunctionCall{
+								Name: "edit_with_pattern",
+								Arguments: map[string]interface{}{
+									"path":         "target.py",
+									"find_text":    "old",
+									"replace_with": "new",
+								},
+							},
+						},
+					},
+				},
+			},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_structural_read",
+							Function: llm.FunctionCall{
+								Name: "read_symbol",
+								Arguments: map[string]interface{}{
+									"path":        "target.py",
+									"symbol_name": "Target",
+								},
+							},
+						},
+					},
+				},
+			},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_after_read",
+							Function: llm.FunctionCall{
+								Name: "edit_with_pattern",
+								Arguments: map[string]interface{}{
+									"path":         "target.py",
+									"find_text":    "old",
+									"replace_with": "new",
+								},
+							},
+						},
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "done without post-edit verification"}},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_post_edit_structural_read",
+							Function: llm.FunctionCall{
+								Name: "read_symbol",
+								Arguments: map[string]interface{}{
+									"path":        "target.py",
+									"symbol_name": "Target",
+								},
+							},
+						},
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "done after post-edit structural read"}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	editTool := &dummyTool{name: "edit_with_pattern", response: "edit applied", isMutating: true}
+	readTool := &dummyTool{name: "read_symbol", response: "symbol source", isMutating: false}
+	registry.Register(editTool)
+	registry.Register(readTool)
+	agentInst := New(mockLLM, registry)
+
+	resp, err := agentInst.RunWithOptions(context.Background(), nil, "large edit", RunOptions{MaxIterations: 10})
+	if err != nil {
+		t.Fatalf("RunWithOptions error = %v", err)
+	}
+	if resp.FinalContent != "done after post-edit structural read" {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+	if editTool.calls != 1 {
+		t.Fatalf("edit_with_pattern should run only after structural read, calls=%d", editTool.calls)
+	}
+	if readTool.calls != 2 {
+		t.Fatalf("read_symbol calls=%d, want 2", readTool.calls)
+	}
+	joinedRequests := ""
+	for _, req := range mockLLM.requests {
+		joinedRequests += joinMessageContent(req.Messages)
+	}
+	if !strings.Contains(joinedRequests, "Do not finish yet") {
+		t.Fatalf("final response was not blocked before structural read:\n%s", joinedRequests)
+	}
+	foundStructuralBlock := false
+	for _, call := range resp.ToolCalls {
+		if call.Result != nil && strings.Contains(call.Result.Content, "Before any further edit or final report") {
+			foundStructuralBlock = true
+		}
+	}
+	if !foundStructuralBlock {
+		t.Fatalf("direct edit retry was not blocked by structural read guard: %#v", resp.ToolCalls)
 	}
 }
 
@@ -2012,6 +2188,24 @@ func TestAgentBlocksOmittedToolArgumentPlaceholder(t *testing.T) {
 				},
 			},
 			{Message: llm.Message{Role: "assistant", Content: "Done"}},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_structural_read",
+							Function: llm.FunctionCall{
+								Name: "read_symbol",
+								Arguments: map[string]interface{}{
+									"path":        "report.md",
+									"symbol_name": "Report",
+								},
+							},
+						},
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "Done after read"}},
 		},
 	}
 
@@ -2021,7 +2215,9 @@ func TestAgentBlocksOmittedToolArgumentPlaceholder(t *testing.T) {
 		response:   "should not run",
 		isMutating: true,
 	}
+	readTool := &dummyTool{name: "read_symbol", response: "symbol source", isMutating: false}
 	registry.Register(editTool)
+	registry.Register(readTool)
 	shadow := &diffShadowSnapshotter{}
 	agentInst := New(mockLLM, registry)
 	agentInst.shadow = shadow
@@ -2036,7 +2232,7 @@ func TestAgentBlocksOmittedToolArgumentPlaceholder(t *testing.T) {
 	if shadow.preCalls != 0 || shadow.postCalls != 0 {
 		t.Fatalf("shadow should not run for blocked placeholder, pre=%d post=%d", shadow.preCalls, shadow.postCalls)
 	}
-	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Result == nil || !resp.ToolCalls[0].Result.IsError {
+	if len(resp.ToolCalls) < 1 || resp.ToolCalls[0].Result == nil || !resp.ToolCalls[0].Result.IsError {
 		t.Fatalf("expected blocked tool call result, got %#v", resp.ToolCalls)
 	}
 	if !strings.Contains(resp.ToolCalls[0].Result.Content, "omitted-content placeholder") {
