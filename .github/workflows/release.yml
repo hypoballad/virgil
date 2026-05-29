@@ -1,0 +1,58 @@
+name: Release Virgil
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Test
+        run: go test ./cmd/... ./internal/...
+
+      - name: Build Virgil
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          go build -trimpath -ldflags "-X main.version=${VERSION}" -o dist/virgil-linux-amd64 ./cmd/virgil
+          go build -trimpath -o dist/virgil-inspect-linux-amd64 ./cmd/inspect
+          chmod +x dist/virgil-linux-amd64 dist/virgil-inspect-linux-amd64
+
+      - name: Build VS Code extension
+        working-directory: vscode-extension
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm install
+          npm run compile
+          npx @vscode/vsce package --out "../dist/virgil-debug-context-${VERSION}.vsix"
+          ls -l ../dist/virgil-debug-context-${VERSION}.vsix
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/virgil-linux-amd64
+            dist/virgil-inspect-linux-amd64
+            dist/virgil-debug-context-*.vsix
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
