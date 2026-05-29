@@ -1,0 +1,1 @@
+ALTER TABLE codebase_symbols ADD COLUMN is_fallback INTEGER NOT NULL DEFAULT 0;

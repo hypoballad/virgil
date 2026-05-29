@@ -1,0 +1,35 @@
+{
+  "name": "virgil-debug-context",
+  "displayName": "Virgil Debug Context",
+  "description": "Export VS Code debugger context for Virgil.",
+  "version": "0.1.2",
+  "publisher": "yasukun",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Debuggers",
+    "Other"
+  ],
+  "activationEvents": [
+    "onDebug",
+    "onCommand:virgil.exportDebugContext"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "virgil.exportDebugContext",
+        "title": "Virgil: Export Debug Context",
+        "category": "Virgil"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "node --check src/extension.js",
+    "test": "npm run compile",
+    "package": "npx @vscode/vsce package"
+  },
+  "devDependencies": {}
+}

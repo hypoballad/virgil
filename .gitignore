@@ -1,0 +1,37 @@
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Virgil local state
+.virgil/
+.agent/
+
+# Notes and planning artifacts
+/SPECS/
+/work/
+
+# Build outputs
+/virgil
+/inspect
+*.test
+*.out
+coverage.out
+*.vsix
+
+# Go workspace/cache artifacts
+/bin/
+/dist/
+node_modules/
+vscode-extension/node_modules/
+
+# Logs and temporary files
+*.log
+*.tmp
+tmp/
+temp/
+
+# Editor/OS files
+.DS_Store
+.idea/
+.vscode/
