@@ -337,11 +337,60 @@ func TestPreflightShrinkCompressesOlderMessages(t *testing.T) {
 	if !strings.Contains(joined, "compressed older work") {
 		t.Fatalf("compressed request missing summary: %s", joined)
 	}
-	if strings.Contains(joined, "old-00") {
+	if strings.Contains(joined, "old-01") {
 		t.Fatalf("compressed request retained oldest message: %s", joined)
 	}
 	if !strings.Contains(joined, "new task") {
 		t.Fatalf("compressed request missing latest user task: %s", joined)
+	}
+}
+
+func TestPreflightShrinkPinsOlderUserInstructions(t *testing.T) {
+	activeInstruction := "プランは計画書としてtrain/.virgil/plan 配下に名前をつけて保存してください"
+	history := []llm.Message{
+		{Role: "user", Content: activeInstruction},
+	}
+	for i := 0; i < 12; i++ {
+		history = append(history, llm.Message{
+			Role:    "assistant",
+			Content: fmt.Sprintf("work-%02d %s", i, strings.Repeat("context ", 100)),
+		})
+	}
+
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{Message: llm.Message{Role: "assistant", Content: "compressed assistant work"}},
+			{Message: llm.Message{Role: "assistant", Content: "done"}},
+		},
+	}
+	agentInst := New(mockLLM, tools.NewRegistry())
+
+	resp, err := agentInst.RunWithOptions(context.Background(), history, "continue task", RunOptions{
+		PreflightShrink:                   true,
+		ContextLimitTokens:                100,
+		PreflightShrinkPercent:            1,
+		PreflightShrinkCooldownIterations: 5,
+	})
+	if err != nil {
+		t.Fatalf("RunWithOptions error = %v", err)
+	}
+	if resp.FinalContent != "done" {
+		t.Fatalf("FinalContent = %q, want done", resp.FinalContent)
+	}
+	if mockLLM.callCount != 2 {
+		t.Fatalf("LLM calls = %d, want 2", mockLLM.callCount)
+	}
+
+	summaryInput := joinMessageContent(mockLLM.requests[0].Messages)
+	if strings.Contains(summaryInput, activeInstruction) {
+		t.Fatalf("active user instruction should not be summarized:\n%s", summaryInput)
+	}
+	chatInput := joinMessageContent(mockLLM.requests[1].Messages)
+	if !strings.Contains(chatInput, activeInstruction) {
+		t.Fatalf("compressed request missing pinned active instruction:\n%s", chatInput)
+	}
+	if !strings.Contains(chatInput, "compressed assistant work") {
+		t.Fatalf("compressed request missing summary:\n%s", chatInput)
 	}
 }
 
@@ -848,6 +897,66 @@ func TestRunTaskContinuesWhenModelOnlyReturnsTodoList(t *testing.T) {
 	}
 	if !foundContinuePrompt {
 		t.Fatalf("second request did not include continue prompt: %#v", secondReq.Messages)
+	}
+}
+
+func TestRunTaskRequiresSavedArtifactWhenRequested(t *testing.T) {
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{Message: llm.Message{Role: "assistant", Content: "TODO:\n1. [x] 調査\n\n## 結果報告\n計画しました"}},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						testToolCallWithArgs("write_file", map[string]interface{}{
+							"path":    "train/.virgil/plan/ae_scenario_test_plan.md",
+							"content": "# Plan\n",
+						}),
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "TODO:\n1. [x] 保存\n\n## 結果報告\n保存しました"}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	writeTool := &dummyTool{name: "write_file", response: "written", isMutating: true}
+	registry.Register(writeTool)
+	agent := New(mockLLM, registry)
+
+	resp, err := agent.RunTask(context.Background(), nil, "プランは計画書としてtrain/.virgil/plan 配下に名前をつけて保存してください。具体的なコードは書かないでください。")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mockLLM.callCount != 3 {
+		t.Fatalf("LLM calls = %d, want 3", mockLLM.callCount)
+	}
+	if writeTool.calls != 1 {
+		t.Fatalf("write_file calls=%d, want 1", writeTool.calls)
+	}
+	if !strings.Contains(resp.FinalContent, "保存しました") {
+		t.Fatalf("final content = %q", resp.FinalContent)
+	}
+
+	secondReq := mockLLM.requests[1]
+	foundSavePrompt := false
+	for _, msg := range secondReq.Messages {
+		if msg.Role == "user" && strings.Contains(msg.Content, "指定された成果物を保存してください") {
+			foundSavePrompt = true
+			break
+		}
+	}
+	if !foundSavePrompt {
+		t.Fatalf("second request did not include save-artifact prompt: %#v", secondReq.Messages)
+	}
+}
+
+func TestTaskRequiresSavedArtifact(t *testing.T) {
+	if !taskRequiresSavedArtifact("プランは計画書としてtrain/.virgil/plan 配下に名前をつけて保存してください") {
+		t.Fatal("expected saved artifact requirement")
+	}
+	if taskRequiresSavedArtifact("実使用シナリオテストのプランニングをしてください。具体的なコードは書かないでください") {
+		t.Fatal("plain planning request should not require saved artifact")
 	}
 }
 

@@ -303,6 +303,7 @@ type preflightShrinkResult struct {
 	thresholdTokens    int
 	summarizedMessages int
 	keptRecentMessages int
+	pinnedUserMessages int
 }
 
 func (a *Agent) shouldPreflightShrink(opts RunOptions, tokenEstimate int, iteration int, lastShrinkIteration int) bool {
@@ -329,16 +330,32 @@ func (a *Agent) shouldPreflightShrink(opts RunOptions, tokenEstimate int, iterat
 
 func (a *Agent) preflightShrink(ctx context.Context, messages []llm.Message, opts RunOptions, beforeTokens int) (*preflightShrinkResult, error) {
 	base, older, recent := splitMessagesForPreflightShrink(messages, preflightShrinkRecentMessages)
+	older, pinnedUsers := pinUserMessagesForPreflightShrink(older)
 	if len(older) == 0 {
-		return nil, errors.New("no older messages available to summarize")
+		if len(pinnedUsers) == 0 {
+			return nil, errors.New("no older messages available to summarize")
+		}
+		compressed := make([]llm.Message, 0, len(base)+len(pinnedUsers)+len(recent))
+		compressed = append(compressed, base...)
+		compressed = append(compressed, pinnedUsers...)
+		compressed = append(compressed, recent...)
+		return &preflightShrinkResult{
+			messages:           compressed,
+			beforeTokens:       beforeTokens,
+			thresholdTokens:    opts.ContextLimitTokens * opts.PreflightShrinkPercent / 100,
+			summarizedMessages: 0,
+			keptRecentMessages: len(recent),
+			pinnedUserMessages: len(pinnedUsers),
+		}, nil
 	}
 
 	threshold := opts.ContextLimitTokens * opts.PreflightShrinkPercent / 100
 	log.Printf(
-		"agent: preflight shrink start: before=%d threshold=%d summarized=%d kept_recent=%d",
+		"agent: preflight shrink start: before=%d threshold=%d summarized=%d pinned_users=%d kept_recent=%d",
 		beforeTokens,
 		threshold,
 		len(older),
+		len(pinnedUsers),
 		len(recent),
 	)
 	a.emitProgress(ProgressEvent{
@@ -351,7 +368,7 @@ func (a *Agent) preflightShrink(ctx context.Context, messages []llm.Message, opt
 		return nil, err
 	}
 
-	compressed := make([]llm.Message, 0, len(base)+1+len(recent))
+	compressed := make([]llm.Message, 0, len(base)+1+len(pinnedUsers)+len(recent))
 	compressed = append(compressed, base...)
 	compressed = append(compressed, llm.Message{
 		Role: "system",
@@ -361,6 +378,7 @@ func (a *Agent) preflightShrink(ctx context.Context, messages []llm.Message, opt
 			summary,
 		),
 	})
+	compressed = append(compressed, pinnedUsers...)
 	compressed = append(compressed, recent...)
 
 	return &preflightShrinkResult{
@@ -369,6 +387,7 @@ func (a *Agent) preflightShrink(ctx context.Context, messages []llm.Message, opt
 		thresholdTokens:    threshold,
 		summarizedMessages: len(older),
 		keptRecentMessages: len(recent),
+		pinnedUserMessages: len(pinnedUsers),
 	}, nil
 }
 
@@ -402,6 +421,21 @@ func splitMessagesForPreflightShrink(messages []llm.Message, recentCount int) (b
 	older = messages[bodyStart:split]
 	recent = messages[split:]
 	return base, older, recent
+}
+
+func pinUserMessagesForPreflightShrink(messages []llm.Message) (summarizable []llm.Message, pinned []llm.Message) {
+	if len(messages) == 0 {
+		return nil, nil
+	}
+	summarizable = make([]llm.Message, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
+			pinned = append(pinned, msg)
+			continue
+		}
+		summarizable = append(summarizable, msg)
+	}
+	return summarizable, pinned
 }
 
 // IsPlanMode は現在プランモードかを返す
@@ -702,11 +736,12 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				heuristicEstimate = a.estimateTokenCountWithToolsRaw(requestMessages)
 				localEstimate = a.applyTokenCalibration(heuristicEstimate)
 				log.Printf(
-					"agent: preflight shrink complete: before=%d after=%d threshold=%d summarized=%d kept_recent=%d",
+					"agent: preflight shrink complete: before=%d after=%d threshold=%d summarized=%d pinned_users=%d kept_recent=%d",
 					shrinkResult.beforeTokens,
 					localEstimate,
 					shrinkResult.thresholdTokens,
 					shrinkResult.summarizedMessages,
+					shrinkResult.pinnedUserMessages,
 					shrinkResult.keptRecentMessages,
 				)
 			}
@@ -802,6 +837,16 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				messages = append(messages, llm.Message{
 					Role:    "user",
 					Content: "TODO リストだけで停止しています。最終回答にせず、最初の未完了 TODO の作業を必要なツール呼び出しで今すぐ開始してください。指定された検証が通ったら追加探索せず ## 結果報告 で終了してください。",
+				})
+				response.Messages = messages
+				continue
+			}
+			if systemPromptOverride != "" && taskRequiresSavedArtifact(userInput) && !hasSuccessfulFileMutation(response.ToolCalls) {
+				log.Printf("agent: task final response blocked because requested saved artifact is missing")
+				messages = append(messages, chatResp.Message)
+				messages = append(messages, llm.Message{
+					Role:    "user",
+					Content: "ユーザーは計画書・ドキュメント・ファイルを指定パスへ保存するよう依頼していますが、まだファイル作成/編集ツールが成功していません。最終回答にせず、write_file/edit_file/edit_with_pattern で指定された成果物を保存してください。具体的なコードを書かない指示がある場合は、Markdown の計画書だけを保存してください。保存後に ## 結果報告 で終了してください。",
 				})
 				response.Messages = messages
 				continue
@@ -1167,6 +1212,57 @@ func normalizeMaxIterations(maxIterations int) int {
 		return MaxIterations
 	}
 	return maxIterations
+}
+
+func taskRequiresSavedArtifact(input string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(input))
+	if normalized == "" {
+		return false
+	}
+	hasWriteIntent := strings.Contains(normalized, "保存") ||
+		strings.Contains(normalized, "書き出") ||
+		strings.Contains(normalized, "作成") ||
+		strings.Contains(normalized, "出力") ||
+		strings.Contains(normalized, "save") ||
+		strings.Contains(normalized, "write") ||
+		strings.Contains(normalized, "create")
+	if !hasWriteIntent {
+		return false
+	}
+	hasArtifact := strings.Contains(normalized, "計画書") ||
+		strings.Contains(normalized, "プラン") ||
+		strings.Contains(normalized, "ドキュメント") ||
+		strings.Contains(normalized, "document") ||
+		strings.Contains(normalized, "plan") ||
+		strings.Contains(normalized, "file") ||
+		strings.Contains(normalized, "ファイル") ||
+		strings.Contains(normalized, ".md") ||
+		strings.Contains(normalized, "/")
+	if !hasArtifact {
+		return false
+	}
+	return strings.Contains(normalized, "配下") ||
+		strings.Contains(normalized, "path") ||
+		strings.Contains(normalized, "パス") ||
+		strings.Contains(normalized, ".md") ||
+		strings.Contains(normalized, "/")
+}
+
+func hasSuccessfulFileMutation(records []ToolCallRecord) bool {
+	for _, record := range records {
+		switch record.ToolName {
+		case "write_file", "edit_file", "edit_with_pattern":
+		default:
+			continue
+		}
+		if record.Error != nil {
+			continue
+		}
+		if record.Result != nil && !record.Result.IsError {
+			return true
+		}
+	}
+	return false
 }
 
 func isVMaxRunOptions(opts RunOptions) bool {
