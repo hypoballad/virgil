@@ -111,6 +111,9 @@ type Model struct {
 	vmaxArmed                 bool
 	vmaxActive                bool
 	currentRunMaxIterations   int
+	doFlowActive              bool
+	doFlowRemaining           int
+	doFlowContinueOptions     agent.RunOptions
 
 	agentTimeout time.Duration // 追加: エージェントのタイムアウト
 	runTimeout   time.Duration // 追加: プラン実行のタイムアウト

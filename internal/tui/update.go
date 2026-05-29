@@ -21,6 +21,8 @@ import (
 	"github.com/hypoballad/virgil/internal/tools"
 )
 
+const doFlowMaxContinuationWindows = 12
+
 type indexerTickMsg struct{}
 
 type clockTickMsg struct{}
@@ -226,12 +228,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskRequestMsg:
 		m.awaitingContinuation = false
+		m.lastIterationLimitReached = false
 		if msg.description == "" {
 			return m, m.printSystem("⚠️ /task requires a description. Example: /task add tests for tokenizer")
 		}
 		display := msg.display
 		if display == "" {
 			display = "/task " + msg.description
+		}
+		runOpts := m.consumeVMaxRunOptions()
+		if msg.flow {
+			m.doFlowActive = true
+			m.doFlowRemaining = doFlowMaxContinuationWindows
+			if runOpts.MaxIterations == 0 {
+				runOpts.MaxIterations = agent.MaxIterations
+			}
+			m.doFlowContinueOptions = runOpts
+		} else {
+			m.doFlowActive = false
+			m.doFlowRemaining = 0
+			m.doFlowContinueOptions = agent.RunOptions{}
 		}
 
 		m.turnNumber++
@@ -257,7 +273,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(
 			tea.Printf("%s", m.renderSingleMessage(userMsg, nil)),
 			m.spinner.Tick,
-			m.callTask(ctx, m.promptWithDebugContext(msg.description), m.consumeVMaxRunOptions()),
+			m.callTask(ctx, m.promptWithDebugContext(msg.description), runOpts),
 		)
 
 	case agentTaskResponseMsg:
@@ -278,7 +294,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.history = msg.response.Messages
 		m.lastToolCalls = msg.response.ToolCalls
 		m.lastIterationLimitReached = msg.response.MaxIterationsReached
-		m.awaitingContinuation = msg.response.MaxIterationsReached
+		m.awaitingContinuation = msg.response.MaxIterationsReached && !m.doFlowActive
 		if m.currentTurnID != 0 {
 			_ = m.repo.Turns.UpdateTurnResponse(
 				m.currentTurnID,
@@ -315,8 +331,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmd := m.printAssistant(msg.response.FinalContent, msg.response.ToolCalls)
 		if msg.response.MaxIterationsReached {
+			if m.doFlowActive {
+				return m.continueDoFlowAfterIterationLimit(cmd)
+			}
 			return m, tea.Batch(cmd, m.printSystemDisplayOnly(iterationPausePrompt(m.activeRunMaxIterations())), autoOffCmd)
 		}
+		m.doFlowActive = false
+		m.doFlowRemaining = 0
+		m.doFlowContinueOptions = agent.RunOptions{}
 		cmds := []tea.Cmd{cmd, autoOffCmd}
 		cmds = m.appendAutoShrinkCommands(cmds)
 		return m, tea.Batch(cmds...)
@@ -377,11 +399,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history = msg.response.Messages
 			m.lastToolCalls = msg.response.ToolCalls
 			m.lastIterationLimitReached = msg.response.MaxIterationsReached
-			m.awaitingContinuation = msg.response.MaxIterationsReached
+			m.awaitingContinuation = msg.response.MaxIterationsReached && !m.doFlowActive
 
 			// Print assistant message
 			cmds = append(cmds, m.printAssistant(msg.response.FinalContent, msg.response.ToolCalls))
 			if msg.response.MaxIterationsReached {
+				if m.doFlowActive {
+					return m.continueDoFlowAfterIterationLimit(cmds...)
+				}
 				cmds = append(cmds, m.printSystemDisplayOnly(iterationPausePrompt(m.activeRunMaxIterations())))
 			}
 
@@ -454,6 +479,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if !msg.response.MaxIterationsReached {
+				m.doFlowActive = false
+				m.doFlowRemaining = 0
+				m.doFlowContinueOptions = agent.RunOptions{}
 				cmds = m.appendAutoShrinkCommands(cmds)
 			}
 		}
@@ -755,6 +783,9 @@ func (m Model) startChatTurn(displayInput string, agentInput string) (tea.Model,
 	if m.awaitingContinuation {
 		return m, m.printSystemDisplayOnly("The previous task is paused at the iteration limit. Type /continue to proceed, or /abort to stop before starting a new request.")
 	}
+	m.doFlowActive = false
+	m.doFlowRemaining = 0
+	m.doFlowContinueOptions = agent.RunOptions{}
 
 	// Reset pending rewind if user sends a normal message
 	m.pendingRewind = nil
@@ -828,6 +859,9 @@ func (m Model) handlePendingActionKey(key string) (bool, tea.Model, tea.Cmd) {
 		case m.awaitingContinuation:
 			m.awaitingContinuation = false
 			m.lastIterationLimitReached = false
+			m.doFlowActive = false
+			m.doFlowRemaining = 0
+			m.doFlowContinueOptions = agent.RunOptions{}
 			return true, m, m.printSystemDisplayOnly("Stopped. The paused task will not be continued.")
 		case m.pendingRewind != nil:
 			m.pendingRewind = nil
@@ -877,6 +911,9 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		}
 		m.awaitingContinuation = false
 		m.lastIterationLimitReached = false
+		m.doFlowActive = false
+		m.doFlowRemaining = 0
+		m.doFlowContinueOptions = agent.RunOptions{}
 		return m, m.printSystemDisplayOnly("Stopped. The paused task will not be continued.")
 
 	case "/confirm-run":
@@ -950,8 +987,12 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		return m, m.printSystemDisplayOnly(formatTaskList(path, tasks))
 
 	case "/do":
-		if len(args) != 2 {
-			return m, m.printSystem("Usage: /do <task-id> <task_document.md>")
+		flow := false
+		if len(args) == 3 && args[2] == "--flow" {
+			flow = true
+		}
+		if len(args) != 2 && !flow {
+			return m, m.printSystem("Usage: /do <task-id> <task_document.md> [--flow]")
 		}
 		taskID := args[0]
 		path, tasks, err := loadTaskBreakdown(m.workspaceRoot, args[1])
@@ -970,8 +1011,12 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		}
 		prompt := buildDoTaskPrompt(path, task, dependencyWarnings(task, tasks))
 		display := fmt.Sprintf("/do %s %s", task.ID, args[1])
+		if flow {
+			display += " --flow"
+			prompt += "\nFlow mode: Continue working until the task is genuinely complete. If you reach an iteration window limit, resume without repeating completed work.\n"
+		}
 		return m, func() tea.Msg {
-			return taskRequestMsg{description: prompt, display: display}
+			return taskRequestMsg{description: prompt, display: display, flow: flow}
 		}
 
 	case "/task-status":
@@ -1104,6 +1149,9 @@ func iterationPausePrompt(maxIterations int) string {
 func (m Model) continuePausedAgent() (tea.Model, tea.Cmd) {
 	m.awaitingContinuation = false
 	m.lastIterationLimitReached = false
+	m.doFlowActive = false
+	m.doFlowRemaining = 0
+	m.doFlowContinueOptions = agent.RunOptions{}
 	m.waiting = true
 	m.waitingStartedAt = time.Now()
 	m.partialAssistantContent = ""
@@ -1121,6 +1169,39 @@ func (m Model) continuePausedAgent() (tea.Model, tea.Cmd) {
 	)
 }
 
+func (m Model) continueDoFlowAfterIterationLimit(previousCmds ...tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.doFlowRemaining <= 0 {
+		m.doFlowActive = false
+		m.doFlowContinueOptions = agent.RunOptions{}
+		m.awaitingContinuation = true
+		m.lastIterationLimitReached = true
+		cmds := append([]tea.Cmd{}, previousCmds...)
+		cmds = append(cmds, m.printSystemDisplayOnly("⚠️ /do --flow reached its automatic continuation limit. Review the partial result, then use /continue or /abort."))
+		return m, tea.Batch(cmds...)
+	}
+
+	m.doFlowRemaining--
+	m.awaitingContinuation = false
+	m.lastIterationLimitReached = false
+	m.waiting = true
+	m.waitingStartedAt = time.Now()
+	m.partialAssistantContent = ""
+	m.lastActivityMessage = "Continuing /do --flow..."
+	m.currentIteration = 1
+	m.err = nil
+
+	ctx, cancel := newAgentRunContext()
+	m.cancelAgent = cancel
+
+	cmds := append([]tea.Cmd{}, previousCmds...)
+	cmds = append(cmds,
+		m.printSystemDisplayOnly(fmt.Sprintf("Continuing /do --flow automatically (%d windows remaining)...", m.doFlowRemaining)),
+		m.spinner.Tick,
+		m.callAgent(ctx, "Continue the /do task from where you left off. Do not repeat completed work. Keep going until the task is genuinely complete. If the requested verification has already passed, provide the final report now.", m.doFlowContinueOptions),
+	)
+	return m, tea.Batch(cmds...)
+}
+
 func (m Model) slashCommandHelp() string {
 	profile := m.toolProfile
 	if profile == "" {
@@ -1133,7 +1214,7 @@ Available slash commands:
   /rewind          Show shadow git history
   /task <task>     Execute a task with structured TODO list and result report
   /tasks <path>    List task IDs and status from a task breakdown document
-  /do <id> <path>  Execute one explicit task from a task breakdown document
+  /do <id> <path> [--flow]  Execute one task; --flow auto-continues at iteration limits
   /breakdown <source> [--output <path>]  Generate a task breakdown document
   /btw <task>      Execute a single quick task without TODO structure
   /reindex         Reindex workspace (mtime-based diff; auto-forces on index version changes)
@@ -1169,7 +1250,7 @@ Available slash commands:
   /clear           Clear context and start a new session
   /task <task>     Execute a task with structured TODO list and result report
   /tasks <path>    List task IDs and status from a task breakdown document
-  /do <id> <path>  Execute one explicit task from a task breakdown document
+  /do <id> <path> [--flow]  Execute one task; --flow auto-continues at iteration limits
   /task-status <id> <status> <path>  Update one task status line
   /breakdown <source> [--output <path>]  Generate a task breakdown document
   /reindex         Reindex workspace (mtime-based diff; auto-forces on index version changes)

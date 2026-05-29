@@ -41,6 +41,7 @@ type reindexRequestMsg struct {
 type taskRequestMsg struct {
 	description string
 	display     string
+	flow        bool
 }
 
 type agentTaskResponseMsg struct {

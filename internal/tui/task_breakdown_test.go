@@ -160,6 +160,34 @@ func TestDoSlashCommandBuildsTaskRequest(t *testing.T) {
 	}
 }
 
+func TestDoSlashCommandBuildsFlowTaskRequest(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "tasks.md")
+	if err := os.WriteFile(path, []byte(sampleTaskBreakdown), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := testModel()
+	m.workspaceRoot = root
+
+	_, cmd := m.handleSlashCommand("/do RPT-001 tasks.md --flow")
+	if cmd == nil {
+		t.Fatal("expected /do --flow command")
+	}
+	msg, ok := cmd().(taskRequestMsg)
+	if !ok {
+		t.Fatalf("expected taskRequestMsg, got %#v", cmd())
+	}
+	if !msg.flow {
+		t.Fatal("flow flag should be set")
+	}
+	if msg.display != "/do RPT-001 tasks.md --flow" {
+		t.Fatalf("display = %q", msg.display)
+	}
+	if !strings.Contains(msg.description, "Flow mode") {
+		t.Fatalf("description missing flow instruction:\n%s", msg.description)
+	}
+}
+
 func TestParseBreakdownCommand(t *testing.T) {
 	cmd, err := parseBreakdownCommand("/Breakdown docs/source.md --output docs/tasks.md")
 	if err != nil {

@@ -75,6 +75,8 @@ func TestAbortClearsAwaitingContinuation(t *testing.T) {
 	m := testModel()
 	m.awaitingContinuation = true
 	m.lastIterationLimitReached = true
+	m.doFlowActive = true
+	m.doFlowRemaining = 3
 	updated, _ := m.handleSlashCommand("/abort")
 	got := updated.(*Model)
 	if got.awaitingContinuation {
@@ -82,6 +84,55 @@ func TestAbortClearsAwaitingContinuation(t *testing.T) {
 	}
 	if got.lastIterationLimitReached {
 		t.Fatal("lastIterationLimitReached should be false after /abort")
+	}
+	if got.doFlowActive || got.doFlowRemaining != 0 {
+		t.Fatal("do flow state should be cleared after /abort")
+	}
+}
+
+func TestDoFlowAutoContinuesAtIterationLimit(t *testing.T) {
+	m := testModel()
+	m.doFlowActive = true
+	m.doFlowRemaining = 1
+	m.doFlowContinueOptions = agent.RunOptions{MaxIterations: agent.MaxIterations}
+
+	updated, cmd := m.continueDoFlowAfterIterationLimit()
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected auto continuation command")
+	}
+	if !got.waiting {
+		t.Fatal("model should be waiting during auto continuation")
+	}
+	if got.awaitingContinuation {
+		t.Fatal("auto flow should not prompt for manual continuation")
+	}
+	if got.lastIterationLimitReached {
+		t.Fatal("lastIterationLimitReached should be cleared while auto continuing")
+	}
+	if got.doFlowRemaining != 0 {
+		t.Fatalf("doFlowRemaining = %d, want 0", got.doFlowRemaining)
+	}
+}
+
+func TestDoFlowFallsBackToManualPauseAtContinuationLimit(t *testing.T) {
+	m := testModel()
+	m.doFlowActive = true
+	m.doFlowRemaining = 0
+
+	updated, cmd := m.continueDoFlowAfterIterationLimit()
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected pause command")
+	}
+	if got.doFlowActive {
+		t.Fatal("do flow should be disabled after hitting continuation limit")
+	}
+	if !got.awaitingContinuation {
+		t.Fatal("model should fall back to manual continuation")
+	}
+	if !got.lastIterationLimitReached {
+		t.Fatal("iteration limit should remain visible after flow limit")
 	}
 }
 
