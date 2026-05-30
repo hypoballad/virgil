@@ -61,7 +61,7 @@ Rules:
 - Split feature-level work into small tasks.
 - Prefer one method, one helper, one loader/saver path, or one runtime error per task.
 - For every code task, include Edit Steps.
-- Edit Steps must be small enough that each edit can be done in under 40 inserted lines.
+- Edit Steps must be small semantic edits that can be reviewed independently.
 - Include References, Edit Targets, Completion Criteria, and Out of Scope for every task.
 - Include Depends on when a task requires another task to be done first.
 - Use Status: todo for new tasks.
@@ -90,7 +90,7 @@ Hard constraints:
 - Read only the References listed in the task unless blocked.
 - Follow the task's Edit Steps one at a time.
 - Do not make a single full-method or full-class edit when the task can be split.
-- Prefer edits under 40 inserted lines.
+- Prefer small semantic edits that can be reviewed independently.
 - If a large edit is rejected, immediately regenerate a smaller fresh edit; do not retry the rejected payload.
 - If previous partial changes are present, repair only obvious damage needed for this task.
 - If implementation is done but user testing remains, report done-pending-user-test instead of done.

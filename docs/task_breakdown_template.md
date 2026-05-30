@@ -9,7 +9,7 @@ Generated: <YYYY-MM-DD>
 - Do not implement tasks not explicitly selected.
 - Prefer minimal edits.
 - Follow each task's Edit Steps one at a time.
-- Prefer edits under 40 inserted lines.
+- Prefer small semantic edits that can be reviewed independently.
 - User runs full runtime tests unless the task says otherwise.
 
 ## Task <AREA-001>: <short task title>
@@ -19,7 +19,7 @@ Priority: P1
 Scope: <one method, helper, file section, or investigation>
 Depends on: <optional task id or none>
 Manual test: pending
-Edit budget: prefer <= 40 inserted lines per edit
+Edit budget: one small semantic edit or bounded document section per edit
 
 ### Objective
 

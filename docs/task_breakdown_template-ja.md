@@ -9,7 +9,7 @@
 - 明示的に選択されていないタスクは実装しないこと。
 - 最小限の編集を優先すること。
 - 各タスクの編集ステップ（Edit Steps）を1つずつ順に追うこと。
-- 1回の編集につき、挿入行数が40行未満の編集を優先すること。
+- 独立してレビューできる小さな意味単位の編集を優先すること。
 - タスクで別途指定されていない限り、ユーザーが完全な実行時テストを実行すること。
 
 ## Task <AREA-001>: <簡潔なタスクタイトル>
@@ -19,7 +19,7 @@ Priority: P1
 Scope: <1つのメソッド、ヘルパー、ファイルセクション、または調査>
 Depends on: <オプションの依存先タスクID、または none>
 Manual test: pending
-Edit budget: prefer <= 40 inserted lines per edit
+Edit budget: one small semantic edit or bounded document section per edit
 
 ### 目的
 
