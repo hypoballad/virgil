@@ -680,6 +680,52 @@ Usage:
 /help
 ```
 
+### `/history`
+
+Arguments:
+
+- none: show recent input history, newest first
+- `<number>`: restore that numbered entry into the input box without sending it
+
+Behavior:
+
+- `/history` prints recent input history with numbers.
+- `/history <number>` restores the selected entry to the input box.
+- Restored input is not sent automatically; edit it if needed, then send with `Alt+Enter` or `Ctrl+D`.
+- Slash commands are included in input history.
+
+Usage:
+
+```text
+/history
+/history 2
+```
+
+Related files:
+
+- `internal/tui/update.go`
+
+### `/last`
+
+Arguments:
+
+- none
+
+Behavior:
+
+- Restores the previous input into the input box without sending it.
+- This is a shortcut for restoring the newest input-history entry.
+
+Usage:
+
+```text
+/last
+```
+
+Related files:
+
+- `internal/tui/update.go`
+
 ## Unknown Commands
 
 Any unrecognized slash command returns:
@@ -695,7 +741,7 @@ The help output also documents:
 - `Enter`: insert newline
 - `Alt+Enter`: send message
 - `Ctrl+D`: send message
-- `Alt+Up/Down`: navigate input history
+- `Alt+PageUp/PageDown` or `Alt+Up/Down`: navigate input history
 - `Shift+Tab`: toggle Plan/Edit mode
 - `Ctrl+C (twice)`: quit Virgil
 
@@ -715,6 +761,8 @@ These are key bindings, not slash commands.
 - `/callers`
 - `/callgraph`
 - `/shrink`
+- `/history`
+- `/last`
 - `/confirm-run`
 - `/reject-run`
 - `/btw`

@@ -746,6 +746,58 @@ func slashCommandInput(input string) (string, bool) {
 	return trimmed, strings.HasPrefix(trimmed, "/")
 }
 
+func (m *Model) handleHistoryCommand(args []string) (tea.Model, tea.Cmd) {
+	if len(args) == 0 {
+		return m, m.printSystemDisplayOnly(formatInputHistory(m.inputHistory, 10))
+	}
+	if len(args) != 1 {
+		return m, m.printSystemDisplayOnly("Usage: /history [number]")
+	}
+	n, err := strconv.Atoi(args[0])
+	if err != nil || n <= 0 {
+		return m, m.printSystemDisplayOnly("Usage: /history [number]")
+	}
+	return m.restoreInputHistoryEntry(len(m.inputHistory) - n)
+}
+
+func (m *Model) restoreInputHistoryEntry(index int) (tea.Model, tea.Cmd) {
+	if len(m.inputHistory) == 0 {
+		return m, m.printSystemDisplayOnly("Input history is empty.")
+	}
+	if index < 0 || index >= len(m.inputHistory) {
+		return m, m.printSystemDisplayOnly(fmt.Sprintf("Input history entry must be between 1 and %d.", len(m.inputHistory)))
+	}
+	m.input.SetValue(m.inputHistory[index])
+	m.input.CursorEnd()
+	m.historyIndex = index
+	m.adjustInputHeight()
+	m.updateSlashCompletion()
+	return m, m.printSystemDisplayOnly("Restored input history entry. Edit if needed, then send with Alt+Enter or Ctrl+D.")
+}
+
+func formatInputHistory(history []string, limit int) string {
+	if len(history) == 0 {
+		return "Input history is empty."
+	}
+	if limit <= 0 || limit > len(history) {
+		limit = len(history)
+	}
+	start := len(history) - limit
+	var b strings.Builder
+	b.WriteString("Input history:\n")
+	for i := len(history) - 1; i >= start; i-- {
+		n := len(history) - i
+		entry := strings.ReplaceAll(strings.TrimSpace(history[i]), "\n", "\\n")
+		if len([]rune(entry)) > 120 {
+			runes := []rune(entry)
+			entry = string(runes[:120]) + "..."
+		}
+		fmt.Fprintf(&b, "%d. %s\n", n, entry)
+	}
+	b.WriteString("\nUse /history <number> to restore an entry without sending it.")
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (m Model) navigateInputHistory(direction int) (tea.Model, tea.Cmd) {
 	switch {
 	case direction < 0:
@@ -933,6 +985,12 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg {
 			return runCommandConfirmMsg{approved: false}
 		}
+
+	case "/history":
+		return m.handleHistoryCommand(args)
+
+	case "/last":
+		return m.restoreInputHistoryEntry(len(m.inputHistory) - 1)
 
 	case "/clear":
 		m.awaitingContinuation = false
@@ -1221,6 +1279,8 @@ Available slash commands:
   /btw <task>      Execute a single quick task without TODO structure
   /reindex         Reindex workspace (mtime-based diff; auto-forces on index version changes)
   /shrink          Compress older context into a summary (auto at 50%% or 20+ messages)
+  /history [n]     Show input history or restore entry n into the input box
+  /last            Restore the previous input into the input box
   /clear           Clear context and start a new session
   /continue        Continue a task paused at the iteration limit
   /abort           Stop a task paused at the iteration limit
@@ -1260,6 +1320,8 @@ Available slash commands:
   /callers <name>  Show callers of a function (reverse lookup)
   /callgraph <name> [depth]  Show call graph from a function (Mermaid)
   /shrink          Compress older context into a summary (auto at 50%% or 20+ messages)
+  /history [n]     Show input history or restore entry n into the input box
+  /last            Restore the previous input into the input box
   /confirm-run     Approve pending shell command
   /reject-run      Reject pending shell command
   <guidance>       While a shell command is pending, reject it and send guidance

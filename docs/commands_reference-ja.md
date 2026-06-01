@@ -680,6 +680,52 @@ pytest ではなく python -m unittest で確認してください
 /help
 ```
 
+### `/history`
+
+引数:
+
+- なし: 直近の入力履歴を新しい順に表示します
+- `<number>`: 番号で指定した履歴を、送信せず入力欄に復元します
+
+挙動:
+
+- `/history` は入力履歴を番号付きで表示します。
+- `/history <number>` は選択した履歴を入力欄に復元します。
+- 復元した入力は自動送信されません。必要に応じて編集してから `Alt+Enter` または `Ctrl+D` で送信します。
+- スラッシュコマンドも入力履歴に含まれます。
+
+使用方法:
+
+```text
+/history
+/history 2
+```
+
+関連ファイル:
+
+- `internal/tui/update.go`
+
+### `/last`
+
+引数:
+
+- なし
+
+挙動:
+
+- 直前の入力を、送信せず入力欄に復元します。
+- 最新の入力履歴を復元するショートカットです。
+
+使用方法:
+
+```text
+/last
+```
+
+関連ファイル:
+
+- `internal/tui/update.go`
+
 ## 未知のコマンド (Unknown Commands)
 
 認識されないスラッシュコマンドはすべて以下を返します：
@@ -695,7 +741,7 @@ Unknown command: <cmd>. Type /help for available commands.
 - `Enter`: 改行の挿入
 - `Alt+Enter`: メッセージ送信
 - `Ctrl+D`: メッセージ送信
-- `Alt+Up/Down`: 入力履歴の移動
+- `Alt+PageUp/PageDown` または `Alt+Up/Down`: 入力履歴の移動
 - `Shift+Tab`: Plan（設計）/ Edit（開発）モードの切り替え
 - `Ctrl+C (2回)`: Virgilの終了
 
@@ -715,6 +761,8 @@ Unknown command: <cmd>. Type /help for available commands.
 - `/callers`
 - `/callgraph`
 - `/shrink`
+- `/history`
+- `/last`
 - `/confirm-run`
 - `/reject-run`
 - `/btw`

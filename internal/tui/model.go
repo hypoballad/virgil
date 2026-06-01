@@ -35,6 +35,8 @@ var coreSlashCommands = []string{
 	"/btw",
 	"/reindex",
 	"/shrink",
+	"/history",
+	"/last",
 	"/clear",
 	"/continue",
 	"/abort",
@@ -62,6 +64,8 @@ var allSlashCommands = []string{
 	"/callers",
 	"/callgraph",
 	"/shrink",
+	"/history",
+	"/last",
 	"/btw",
 	"/help",
 }

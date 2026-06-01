@@ -195,6 +195,62 @@ func TestAltPageUpDownNavigateInputHistory(t *testing.T) {
 	}
 }
 
+func TestHistoryCommandRestoresNumberedEntry(t *testing.T) {
+	model := newInputTestModel()
+	model.inputHistory = []string{
+		"/do RPT-001 tasks.md --flow",
+		"/task-status RPT-001 done-pending-user-test tasks.md",
+	}
+
+	updated, cmd := model.handleSlashCommand("/history 2")
+	next := updated.(*Model)
+	if cmd == nil {
+		t.Fatal("expected restore message command")
+	}
+	if got := next.input.Value(); got != "/do RPT-001 tasks.md --flow" {
+		t.Fatalf("/history 2 restored %q", got)
+	}
+	if next.historyIndex != 0 {
+		t.Fatalf("historyIndex = %d, want 0", next.historyIndex)
+	}
+}
+
+func TestLastCommandRestoresPreviousInput(t *testing.T) {
+	model := newInputTestModel()
+	model.inputHistory = []string{
+		"/do RPT-001 tasks.md --flow",
+		"/task-status RPT-001 done-pending-user-test tasks.md",
+	}
+
+	updated, cmd := model.handleSlashCommand("/last")
+	next := updated.(*Model)
+	if cmd == nil {
+		t.Fatal("expected restore message command")
+	}
+	if got := next.input.Value(); got != "/task-status RPT-001 done-pending-user-test tasks.md" {
+		t.Fatalf("/last restored %q", got)
+	}
+	if next.historyIndex != 1 {
+		t.Fatalf("historyIndex = %d, want 1", next.historyIndex)
+	}
+}
+
+func TestFormatInputHistoryShowsNewestFirst(t *testing.T) {
+	got := formatInputHistory([]string{"first", "second\nline", "third"}, 2)
+	for _, want := range []string{
+		"1. third",
+		"2. second\\nline",
+		"Use /history <number>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("history output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "first") {
+		t.Fatalf("history output should respect limit:\n%s", got)
+	}
+}
+
 func TestInputAcceptsRunCommandConfirmationWhileWaiting(t *testing.T) {
 	model := newInputTestModel()
 	model.waiting = true
