@@ -142,10 +142,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "alt+up", "ctrl+p":
+		case "alt+up", "alt+pgup":
 			return m.navigateInputHistory(-1)
 
-		case "alt+down", "ctrl+n":
+		case "alt+down", "alt+pgdown":
 			return m.navigateInputHistory(1)
 
 		case "alt+enter", "ctrl+d":
@@ -1234,7 +1234,7 @@ Keyboard shortcuts:
   Enter            Insert newline
   Alt+Enter        Send message
   Ctrl+D           Send message
-  Ctrl+P/N or Alt+Up/Down  Navigate input history
+  Alt+PageUp/PageDown or Alt+Up/Down  Navigate input history
   1 / 2            Choose pending action when the input is empty
   Esc              Cancel pending action
   Shift+Tab        Toggle Plan/Edit mode
@@ -1273,7 +1273,7 @@ Keyboard shortcuts:
   Enter            Insert newline
   Alt+Enter        Send message
   Ctrl+D           Send message
-  Ctrl+P/N or Alt+Up/Down  Navigate input history
+  Alt+PageUp/PageDown or Alt+Up/Down  Navigate input history
   1 / 2            Choose pending action when the input is empty
   Esc              Cancel pending action
   Shift+Tab        Toggle Plan/Edit mode

@@ -150,7 +150,7 @@ func TestTabAcceptsSlashCompletion(t *testing.T) {
 	}
 }
 
-func TestCtrlPNNavigateInputHistory(t *testing.T) {
+func TestAltPageUpDownNavigateInputHistory(t *testing.T) {
 	model := newInputTestModel()
 	model.inputHistory = []string{
 		"/do RPT-001 tasks.md --flow",
@@ -158,37 +158,37 @@ func TestCtrlPNNavigateInputHistory(t *testing.T) {
 	}
 	model.historyIndex = -1
 
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyPgUp, Alt: true})
 	next := updated.(Model)
 	if got := next.input.Value(); got != "/task-status RPT-001 done-pending-user-test tasks.md" {
-		t.Fatalf("Ctrl+P latest history = %q", got)
+		t.Fatalf("Alt+PageUp latest history = %q", got)
 	}
 	if next.historyIndex != 1 {
-		t.Fatalf("historyIndex after first Ctrl+P = %d, want 1", next.historyIndex)
+		t.Fatalf("historyIndex after first Alt+PageUp = %d, want 1", next.historyIndex)
 	}
 
-	updated, _ = next.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	updated, _ = next.Update(tea.KeyMsg{Type: tea.KeyPgUp, Alt: true})
 	next = updated.(Model)
 	if got := next.input.Value(); got != "/do RPT-001 tasks.md --flow" {
-		t.Fatalf("Ctrl+P older history = %q", got)
+		t.Fatalf("Alt+PageUp older history = %q", got)
 	}
 	if next.historyIndex != 0 {
-		t.Fatalf("historyIndex after second Ctrl+P = %d, want 0", next.historyIndex)
+		t.Fatalf("historyIndex after second Alt+PageUp = %d, want 0", next.historyIndex)
 	}
 
-	updated, _ = next.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	updated, _ = next.Update(tea.KeyMsg{Type: tea.KeyPgDown, Alt: true})
 	next = updated.(Model)
 	if got := next.input.Value(); got != "/task-status RPT-001 done-pending-user-test tasks.md" {
-		t.Fatalf("Ctrl+N newer history = %q", got)
+		t.Fatalf("Alt+PageDown newer history = %q", got)
 	}
 	if next.historyIndex != 1 {
-		t.Fatalf("historyIndex after Ctrl+N = %d, want 1", next.historyIndex)
+		t.Fatalf("historyIndex after Alt+PageDown = %d, want 1", next.historyIndex)
 	}
 
-	updated, _ = next.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	updated, _ = next.Update(tea.KeyMsg{Type: tea.KeyPgDown, Alt: true})
 	next = updated.(Model)
 	if got := next.input.Value(); got != "" {
-		t.Fatalf("Ctrl+N past latest should clear input, got %q", got)
+		t.Fatalf("Alt+PageDown past latest should clear input, got %q", got)
 	}
 	if next.historyIndex != -1 {
 		t.Fatalf("historyIndex after clearing = %d, want -1", next.historyIndex)
