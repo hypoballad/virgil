@@ -142,44 +142,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "alt+up":
-			// 履歴を遡る
-			if len(m.inputHistory) == 0 {
-				return m, nil
-			}
-			if m.historyIndex == -1 {
-				// 最新入力状態 → 最後の履歴へ
-				m.historyIndex = len(m.inputHistory) - 1
-			} else if m.historyIndex > 0 {
-				m.historyIndex--
-			} else {
-				// 既に最古の履歴 → そのまま
-				return m, nil
-			}
-			m.input.SetValue(m.inputHistory[m.historyIndex])
-			m.input.CursorEnd()
-			m.adjustInputHeight()
-			m.updateSlashCompletion()
-			return m, nil
+		case "alt+up", "ctrl+p":
+			return m.navigateInputHistory(-1)
 
-		case "alt+down":
-			// 履歴を進める
-			if m.historyIndex == -1 {
-				// 履歴ナビゲーション中でない → 何もしない
-				return m, nil
-			}
-			if m.historyIndex < len(m.inputHistory)-1 {
-				m.historyIndex++
-				m.input.SetValue(m.inputHistory[m.historyIndex])
-				m.input.CursorEnd()
-			} else {
-				// 最新の履歴を超える → 空入力に戻る
-				m.historyIndex = -1
-				m.input.SetValue("")
-			}
-			m.adjustInputHeight()
-			m.updateSlashCompletion()
-			return m, nil
+		case "alt+down", "ctrl+n":
+			return m.navigateInputHistory(1)
 
 		case "alt+enter", "ctrl+d":
 			return m.submitInput()
@@ -779,6 +746,41 @@ func slashCommandInput(input string) (string, bool) {
 	return trimmed, strings.HasPrefix(trimmed, "/")
 }
 
+func (m Model) navigateInputHistory(direction int) (tea.Model, tea.Cmd) {
+	switch {
+	case direction < 0:
+		if len(m.inputHistory) == 0 {
+			return m, nil
+		}
+		if m.historyIndex == -1 {
+			m.historyIndex = len(m.inputHistory) - 1
+		} else if m.historyIndex > 0 {
+			m.historyIndex--
+		} else {
+			return m, nil
+		}
+		m.input.SetValue(m.inputHistory[m.historyIndex])
+		m.input.CursorEnd()
+	case direction > 0:
+		if m.historyIndex == -1 {
+			return m, nil
+		}
+		if m.historyIndex < len(m.inputHistory)-1 {
+			m.historyIndex++
+			m.input.SetValue(m.inputHistory[m.historyIndex])
+			m.input.CursorEnd()
+		} else {
+			m.historyIndex = -1
+			m.input.SetValue("")
+		}
+	default:
+		return m, nil
+	}
+	m.adjustInputHeight()
+	m.updateSlashCompletion()
+	return m, nil
+}
+
 func (m Model) startChatTurn(displayInput string, agentInput string) (tea.Model, tea.Cmd) {
 	if m.awaitingContinuation {
 		return m, m.printSystemDisplayOnly("The previous task is paused at the iteration limit. Type /continue to proceed, or /abort to stop before starting a new request.")
@@ -1232,7 +1234,7 @@ Keyboard shortcuts:
   Enter            Insert newline
   Alt+Enter        Send message
   Ctrl+D           Send message
-  Alt+Up/Down      Navigate input history
+  Ctrl+P/N or Alt+Up/Down  Navigate input history
   1 / 2            Choose pending action when the input is empty
   Esc              Cancel pending action
   Shift+Tab        Toggle Plan/Edit mode
@@ -1271,7 +1273,7 @@ Keyboard shortcuts:
   Enter            Insert newline
   Alt+Enter        Send message
   Ctrl+D           Send message
-  Alt+Up/Down      Navigate input history
+  Ctrl+P/N or Alt+Up/Down  Navigate input history
   1 / 2            Choose pending action when the input is empty
   Esc              Cancel pending action
   Shift+Tab        Toggle Plan/Edit mode
