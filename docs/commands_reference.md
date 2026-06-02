@@ -680,6 +680,29 @@ Usage:
 /help
 ```
 
+### `/unstuck`
+
+Arguments:
+
+- none
+
+Behavior:
+
+- Starts a new recovery turn for a stalled or cancelled local-LLM attempt.
+- Does not continue hidden reasoning, partial text, or the same long analysis path.
+- Asks the agent to either make exactly one focused tool call or answer with at most 5 concise bullets.
+- Preserves the active task constraints from conversation history.
+
+Usage:
+
+```text
+/unstuck
+```
+
+Related files:
+
+- `internal/tui/update.go`
+
 ### `/history`
 
 Arguments:
@@ -754,6 +777,9 @@ These are key bindings, not slash commands.
 - `/rewind`
 - `/confirm`
 - `/clear`
+- `/continue`
+- `/unstuck`
+- `/abort`
 - `/debug-context`
 - `/vmax`
 - `/task`

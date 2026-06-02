@@ -136,11 +136,26 @@ func TestDoFlowFallsBackToManualPauseAtContinuationLimit(t *testing.T) {
 	}
 }
 
+func TestUnstuckPromptConstrainsNextStep(t *testing.T) {
+	prompt := unstuckPrompt()
+	for _, want := range []string{
+		"UNSTUCK MODE",
+		"Do not continue hidden reasoning",
+		"exactly one focused tool call",
+		"at most 5 concise bullets",
+		"Preserve the user's active task constraints",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("unstuck prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestSlashCommandHelpIsFilteredByDefault(t *testing.T) {
 	m := testModel()
 	help := m.slashCommandHelp()
 
-	for _, want := range []string{"/rewind", "/task <task>", "/tasks <path>", "/do <id>", "/breakdown", "/btw <task>", "/reindex", "/shrink", "/debug-context", "/vmax", "virgil fullpower"} {
+	for _, want := range []string{"/rewind", "/task <task>", "/tasks <path>", "/do <id>", "/breakdown", "/btw <task>", "/reindex", "/shrink", "/unstuck", "/debug-context", "/vmax", "virgil fullpower"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("default help missing %q: %s", want, help)
 		}

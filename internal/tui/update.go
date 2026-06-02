@@ -881,6 +881,29 @@ func (m Model) startChatTurn(displayInput string, agentInput string) (tea.Model,
 	)
 }
 
+func (m Model) startUnstuckTurn() (tea.Model, tea.Cmd) {
+	m.awaitingContinuation = false
+	m.lastIterationLimitReached = false
+	m.doFlowActive = false
+	m.doFlowRemaining = 0
+	m.doFlowContinueOptions = agent.RunOptions{}
+	m.partialAssistantContent = ""
+	return m.startChatTurn("/unstuck", unstuckPrompt())
+}
+
+func unstuckPrompt() string {
+	return `UNSTUCK MODE.
+
+The previous local-LLM attempt appears to have stalled or was cancelled. Do not continue hidden reasoning, partial text, or the same long analysis path.
+
+Reset your next step:
+- If the next concrete action is clear, make exactly one focused tool call.
+- If no tool is needed, answer with at most 5 concise bullets.
+- Do not generate long code or a long plan.
+- Do not repeat prior analysis. State only the next decision/action and proceed.
+- Preserve the user's active task constraints from the conversation history.`
+}
+
 func (m Model) handlePendingActionKey(key string) (bool, tea.Model, tea.Cmd) {
 	if _, actions := m.pendingActions(); len(actions) == 0 {
 		return false, m, nil
@@ -958,6 +981,12 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			return m, m.printSystemDisplayOnly("No paused task to continue.")
 		}
 		return m.continuePausedAgent()
+
+	case "/unstuck":
+		if len(args) > 0 {
+			return m, m.printSystemDisplayOnly("Usage: /unstuck")
+		}
+		return m.startUnstuckTurn()
 
 	case "/abort":
 		if !m.awaitingContinuation {
@@ -1283,6 +1312,7 @@ Available slash commands:
   /last            Restore the previous input into the input box
   /clear           Clear context and start a new session
   /continue        Continue a task paused at the iteration limit
+  /unstuck         Restart from a stalled/cancelled local-LLM attempt with a constrained next step
   /abort           Stop a task paused at the iteration limit
   /debug-context   Load debug context JSON and attach it to chat and /task
   /vmax            Arm one-shot VMAX mode when started with --dangerous-vmax
@@ -1308,6 +1338,7 @@ Available slash commands:
   /rewind <hash>   Rewind to specific commit hash
   /confirm         Confirm pending rewind operation
   /continue        Continue a task paused at the iteration limit
+  /unstuck         Restart from a stalled/cancelled local-LLM attempt with a constrained next step
   /abort           Stop a task paused at the iteration limit
   /clear           Clear context and start a new session
   /task <task>     Execute a task with structured TODO list and result report

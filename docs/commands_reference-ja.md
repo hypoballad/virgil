@@ -680,6 +680,29 @@ pytest ではなく python -m unittest で確認してください
 /help
 ```
 
+### `/unstuck`
+
+引数:
+
+- なし
+
+挙動:
+
+- local LLM が長考に入った、またはキャンセルされた試行から抜け出すための回復ターンを開始します。
+- 直前の隠れた推論、途中出力、同じ長い分析経路を続けないよう指示します。
+- エージェントには、1つの focused tool call を行うか、最大5個の簡潔な箇条書きで回答するよう求めます。
+- 会話履歴に含まれる active task の制約は保持します。
+
+使用方法:
+
+```text
+/unstuck
+```
+
+関連ファイル:
+
+- `internal/tui/update.go`
+
 ### `/history`
 
 引数:
@@ -754,6 +777,9 @@ Unknown command: <cmd>. Type /help for available commands.
 - `/rewind`
 - `/confirm`
 - `/clear`
+- `/continue`
+- `/unstuck`
+- `/abort`
 - `/debug-context`
 - `/vmax`
 - `/task`
