@@ -166,6 +166,7 @@ type RunOptions struct {
 	ContextLimitTokens                int
 	PreflightShrinkPercent            int
 	PreflightShrinkCooldownIterations int
+	ForceEditMode                     bool
 }
 
 type ToolCallRecord struct {
@@ -658,6 +659,11 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 	maxIterations = normalizeMaxIterations(maxIterations)
 	restoreRunCommandAutoConfirm := a.setRunCommandAutoConfirm(opts.AutoConfirmRunCommand)
 	defer restoreRunCommandAutoConfirm()
+	if opts.ForceEditMode {
+		oldPlanMode := a.planMode
+		a.planMode = false
+		defer func() { a.planMode = oldPlanMode }()
+	}
 
 	// ウォッチドッグ初期化（カスタム設定があればそちらを使用）
 	config := DefaultWatchdogConfig()

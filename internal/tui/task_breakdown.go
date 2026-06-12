@@ -129,6 +129,59 @@ func defaultBreakdownOutputPath(source string) string {
 	return filepath.ToSlash(filepath.Join(taskBreakdownTasksDir, slug+"_tasks.md"))
 }
 
+func defaultBreakdownLastOutputPath(workspaceRoot, source string) string {
+	base := summarizeBreakdownSourceForSlug(source)
+	if base == "" {
+		base = "last_response"
+	}
+	slug := sanitizeBreakdownSlug(base)
+	if slug == "" {
+		slug = "last_response"
+	}
+	return nextAvailableTaskPath(workspaceRoot, filepath.ToSlash(filepath.Join(taskBreakdownTasksDir, slug+"_tasks.md")))
+}
+
+func summarizeBreakdownSourceForSlug(source string) string {
+	for _, line := range strings.Split(source, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "```") {
+			continue
+		}
+		line = strings.TrimLeft(line, "#-*0123456789. \t")
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func nextAvailableTaskPath(workspaceRoot, path string) string {
+	if strings.TrimSpace(path) == "" {
+		return path
+	}
+	absPath, err := resolveTaskDocPath(workspaceRoot, path)
+	if err != nil {
+		return path
+	}
+	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+		return path
+	}
+	ext := filepath.Ext(path)
+	base := strings.TrimSuffix(path, ext)
+	for i := 2; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s_%d%s", base, i, ext)
+		absCandidate, err := resolveTaskDocPath(workspaceRoot, candidate)
+		if err != nil {
+			return candidate
+		}
+		if _, err := os.Stat(absCandidate); os.IsNotExist(err) {
+			return candidate
+		}
+	}
+	return path
+}
+
 func sanitizeBreakdownSlug(value string) string {
 	var b strings.Builder
 	lastSep := false
@@ -412,6 +465,27 @@ func parseBreakdownCommand(input string) (breakdownCommand, error) {
 		return breakdownCommand{Source: source, Output: output}, nil
 	}
 	return breakdownCommand{Source: body}, nil
+}
+
+func parseOutputOnlyCommand(input string) (string, error) {
+	fields := strings.Fields(input)
+	if len(fields) == 1 {
+		return "", nil
+	}
+	if len(fields) == 3 && fields[1] == "--output" {
+		output := strings.TrimSpace(fields[2])
+		if output == "" {
+			return "", fmt.Errorf("output path is required")
+		}
+		if strings.Contains(output, " ") {
+			return "", fmt.Errorf("output path must not contain spaces")
+		}
+		return output, nil
+	}
+	if len(fields) == 0 {
+		return "", fmt.Errorf("usage: /breakdown-last [--output <task_document.md>]")
+	}
+	return "", fmt.Errorf("usage: %s [--output <task_document.md>]", fields[0])
 }
 
 func buildBreakdownPrompt(cmd breakdownCommand) string {

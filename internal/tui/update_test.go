@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/hypoballad/virgil/internal/agent"
+	"github.com/hypoballad/virgil/internal/llm"
 )
 
 func TestSlashCommandInputTrimsWhitespace(t *testing.T) {
@@ -155,7 +156,7 @@ func TestSlashCommandHelpIsFilteredByDefault(t *testing.T) {
 	m := testModel()
 	help := m.slashCommandHelp()
 
-	for _, want := range []string{"/rewind", "/task <task>", "/tasks <path>", "/do <id>", "/breakdown", "/btw <task>", "/reindex", "/shrink", "/unstuck", "/debug-context", "/vmax", "virgil fullpower"} {
+	for _, want := range []string{"/rewind", "/task <task>", "/tasks <path>", "/do <id>", "/breakdown", "/breakdown-last", "/copy-last", "/btw <task>", "/reindex", "/shrink", "/unstuck", "/debug-context", "/vmax", "virgil fullpower"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("default help missing %q: %s", want, help)
 		}
@@ -176,6 +177,20 @@ func TestSlashCommandHelpShowsAllInFullPower(t *testing.T) {
 		if !strings.Contains(help, want) {
 			t.Fatalf("fullpower help missing %q: %s", want, help)
 		}
+	}
+}
+
+func TestLastAssistantContentReturnsRawLatestAssistantText(t *testing.T) {
+	got, ok := lastAssistantContent([]llm.Message{
+		{Role: "assistant", Content: "first"},
+		{Role: "user", Content: "question"},
+		{Role: "assistant", Content: "  latest plan\n\n"},
+	})
+	if !ok {
+		t.Fatal("expected assistant content")
+	}
+	if got != "latest plan" {
+		t.Fatalf("content = %q, want raw trimmed latest assistant content", got)
 	}
 }
 

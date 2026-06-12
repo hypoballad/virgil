@@ -408,6 +408,24 @@ Notes:
 
 - The output path must be inside the workspace.
 - Output paths containing spaces are not supported in P2.
+
+### `/breakdown-last [--output <path>]`
+
+Generates a task breakdown document from the last non-empty assistant response in chat history.
+
+If `--output` is omitted, the output path is derived from the first meaningful line of the assistant response:
+
+```text
+.virgil/tasks/<assistant-response-slug>_tasks.md
+```
+
+If that file already exists, a numeric suffix is added, such as `_2`.
+
+This command may create the task document even while Plan mode is active; the temporary edit permission is limited to the breakdown generation run.
+
+### `/copy-last`
+
+Copies the last non-empty assistant response to the clipboard as raw Markdown, without terminal-rendering padding or wrapped display whitespace.
 - The default output path is local Virgil state. Use `--output docs/<name>_tasks.md` when the task document should be project-visible.
 
 ### `/reindex`

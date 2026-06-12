@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/hypoballad/virgil/internal/agent"
@@ -834,6 +835,10 @@ func (m Model) navigateInputHistory(direction int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) startChatTurn(displayInput string, agentInput string) (tea.Model, tea.Cmd) {
+	return m.startChatTurnWithOptions(displayInput, agentInput, m.consumeVMaxRunOptions())
+}
+
+func (m Model) startChatTurnWithOptions(displayInput string, agentInput string, runOpts agent.RunOptions) (tea.Model, tea.Cmd) {
 	if m.awaitingContinuation {
 		return m, m.printSystemDisplayOnly("The previous task is paused at the iteration limit. Type /continue to proceed, or /abort to stop before starting a new request.")
 	}
@@ -877,7 +882,7 @@ func (m Model) startChatTurn(displayInput string, agentInput string) (tea.Model,
 	return m, tea.Batch(
 		tea.Printf("%s", m.renderSingleMessage(userMsg, nil)),
 		m.spinner.Tick,
-		m.callAgent(ctx, agentInput, m.consumeVMaxRunOptions()),
+		m.callAgent(ctx, agentInput, runOpts),
 	)
 }
 
@@ -1135,7 +1140,38 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		prompt := buildBreakdownPrompt(breakdown)
 		display := "/breakdown " + breakdown.Source
 		display += " --output " + breakdown.Output
-		return m.startChatTurn(display, prompt)
+		return m.startChatTurnWithOptions(display, prompt, agent.RunOptions{ForceEditMode: true})
+
+	case "/breakdown-last":
+		output, err := parseOutputOnlyCommand(input)
+		if err != nil {
+			return m, m.printSystem(fmt.Sprintf("Usage: /breakdown-last [--output <task_document.md>]\n❌ %v", err))
+		}
+		source, ok := lastAssistantContent(m.history)
+		if !ok {
+			return m, m.printSystem("❌ /breakdown-last error: no previous assistant response found")
+		}
+		if output == "" {
+			output = defaultBreakdownLastOutputPath(m.workspaceRoot, source)
+		}
+		if _, err := ensureBreakdownOutputPath(m.workspaceRoot, output); err != nil {
+			return m, m.printSystem(fmt.Sprintf("❌ /breakdown-last error: %v", err))
+		}
+		if _, err := ensureTaskBreakdownTemplate(m.workspaceRoot); err != nil {
+			return m, m.printSystem(fmt.Sprintf("❌ /breakdown-last error: %v", err))
+		}
+		prompt := buildBreakdownPrompt(breakdownCommand{Source: source, Output: output})
+		return m.startChatTurnWithOptions("/breakdown-last --output "+output, prompt, agent.RunOptions{ForceEditMode: true})
+
+	case "/copy-last":
+		content, ok := lastAssistantContent(m.history)
+		if !ok {
+			return m, m.printSystem("❌ /copy-last error: no previous assistant response found")
+		}
+		if err := clipboard.WriteAll(content); err != nil {
+			return m, m.printSystem(fmt.Sprintf("❌ /copy-last error: %v", err))
+		}
+		return m, m.printSystemDisplayOnly(fmt.Sprintf("Copied last assistant response to clipboard (%d chars).", len([]rune(content))))
 	case "/reindex":
 		if m.indexer == nil {
 			return m, m.printSystem("⚠️ Symbol indexer is not available.")
@@ -1226,6 +1262,19 @@ func (m *Model) appendSystemMessage(text string) {
 	m.history = append(m.history, msg)
 }
 
+func lastAssistantContent(messages []llm.Message) (string, bool) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "assistant" {
+			continue
+		}
+		content := strings.TrimSpace(messages[i].Content)
+		if content != "" {
+			return content, true
+		}
+	}
+	return "", false
+}
+
 func iterationPausePrompt(maxIterations int) string {
 	if maxIterations <= 0 {
 		maxIterations = agent.MaxIterations
@@ -1305,6 +1354,8 @@ Available slash commands:
   /tasks <path>    List task IDs and status from a task breakdown document
   /do <id> <path> [--flow]  Execute one task; --flow auto-continues at iteration limits
   /breakdown <source> [--output <path>]  Generate a task breakdown document
+  /breakdown-last [--output <path>]  Generate tasks from the last assistant response
+  /copy-last       Copy the last assistant response as raw Markdown
   /btw <task>      Execute a single quick task without TODO structure
   /reindex         Reindex workspace (mtime-based diff; auto-forces on index version changes)
   /shrink          Compress older context into a summary (auto at 50%% or 20+ messages)
@@ -1346,6 +1397,8 @@ Available slash commands:
   /do <id> <path> [--flow]  Execute one task; --flow auto-continues at iteration limits
   /task-status <id> <status> <path>  Update one task status line
   /breakdown <source> [--output <path>]  Generate a task breakdown document
+  /breakdown-last [--output <path>]  Generate tasks from the last assistant response
+  /copy-last       Copy the last assistant response as raw Markdown
   /reindex         Reindex workspace (mtime-based diff; auto-forces on index version changes)
   /reindex --force Force reindex (ignore mtime cache; use after parser/indexer changes)
   /callers <name>  Show callers of a function (reverse lookup)

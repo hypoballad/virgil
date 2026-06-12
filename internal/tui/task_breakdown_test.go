@@ -206,6 +206,52 @@ func TestParseBreakdownCommand(t *testing.T) {
 	}
 }
 
+func TestParseOutputOnlyCommand(t *testing.T) {
+	output, err := parseOutputOnlyCommand("/breakdown-last --output docs/tasks.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != "docs/tasks.md" {
+		t.Fatalf("output = %q", output)
+	}
+
+	output, err = parseOutputOnlyCommand("/breakdown-last")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != "" {
+		t.Fatalf("output = %q, want empty", output)
+	}
+
+	if _, err := parseOutputOnlyCommand("/breakdown-last docs/source.md"); err == nil {
+		t.Fatal("expected unexpected argument error")
+	}
+}
+
+func TestDefaultBreakdownLastOutputPathUsesAssistantContentAndAvoidsCollision(t *testing.T) {
+	root := t.TempDir()
+	first := defaultBreakdownLastOutputPath(root, "# Investigate watchdog behavior\n\nDetails")
+	if first != ".virgil/tasks/Investigate_watchdog_behavior_tasks.md" {
+		t.Fatalf("first path = %q", first)
+	}
+
+	absFirst, err := resolveTaskDocPath(root, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(absFirst), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(absFirst, []byte("existing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	second := defaultBreakdownLastOutputPath(root, "# Investigate watchdog behavior\n\nDetails")
+	if second != ".virgil/tasks/Investigate_watchdog_behavior_tasks_2.md" {
+		t.Fatalf("second path = %q", second)
+	}
+}
+
 func TestBuildBreakdownPromptWithOutput(t *testing.T) {
 	prompt := buildBreakdownPrompt(breakdownCommand{
 		Source: "docs/source.md",
