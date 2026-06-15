@@ -571,8 +571,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastAutoShrinkHistoryLen = len(m.history)
 			afterPercent := contextUsagePercent(m.currentTokens, m.contextLimit)
 			return m, m.printSystemDisplayOnly(fmt.Sprintf(
-				"🔻 Auto-shrink: compressed %d older messages, kept %d recent. Context: %d%% → %d%%.",
-				msg.summarizedMessages, msg.keptMessages, msg.beforePercent, afterPercent,
+				"🔻 Auto-shrink: compressed %d older messages, kept %d recent/pinned (%d user instructions). Context: %d%% → %d%%.",
+				msg.summarizedMessages, msg.keptMessages, msg.pinnedMessages, msg.beforePercent, afterPercent,
 			))
 		}
 
@@ -581,8 +581,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			saveNote = " Summary saved to the current turn."
 		}
 		cmd := m.printSystem(fmt.Sprintf(
-			"✅ Context compressed: summarized %d older messages, kept %d recent messages.%s",
-			msg.summarizedMessages, msg.keptMessages, saveNote,
+			"✅ Context compressed: summarized %d older messages, kept %d recent/pinned messages (%d user instructions).%s",
+			msg.summarizedMessages, msg.keptMessages, msg.pinnedMessages, saveNote,
 		))
 		return m, cmd
 	case rewindPreparedMsg:
@@ -1605,17 +1605,35 @@ func splitHistoryForShrink(history []llm.Message) (base []llm.Message, older []l
 	return base, older, recent
 }
 
-func buildCompressedHistory(base []llm.Message, summary string, recent []llm.Message) []llm.Message {
-	compressed := make([]llm.Message, 0, len(base)+1+len(recent))
+func pinUserMessagesForShrink(messages []llm.Message) (summarizable []llm.Message, pinned []llm.Message) {
+	if len(messages) == 0 {
+		return nil, nil
+	}
+	summarizable = make([]llm.Message, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
+			pinned = append(pinned, msg)
+			continue
+		}
+		summarizable = append(summarizable, msg)
+	}
+	return summarizable, pinned
+}
+
+func buildCompressedHistory(base []llm.Message, summary string, pinned []llm.Message, recent []llm.Message) []llm.Message {
+	compressed := make([]llm.Message, 0, len(base)+1+len(pinned)+len(recent))
 	compressed = append(compressed, base...)
-	compressed = append(compressed, llm.Message{
-		Role: "system",
-		Content: fmt.Sprintf(
-			"Previous conversation summary, compressed by /shrink at %s:\n\n%s",
-			time.Now().Format(time.RFC3339),
-			summary,
-		),
-	})
+	if strings.TrimSpace(summary) != "" {
+		compressed = append(compressed, llm.Message{
+			Role: "system",
+			Content: fmt.Sprintf(
+				"Previous conversation summary, compressed by /shrink at %s:\n\n%s",
+				time.Now().Format(time.RFC3339),
+				summary,
+			),
+		})
+	}
+	compressed = append(compressed, pinned...)
 	compressed = append(compressed, recent...)
 	return compressed
 }
@@ -1624,13 +1642,18 @@ func (m *Model) shrinkHistory(ctx context.Context, base []llm.Message, older []l
 	turnID := m.currentTurnID
 	return func() tea.Msg {
 		m.agent.SetCurrentTurnID(turnID)
-		summary, err := m.agent.SummarizeHistory(ctx, older)
-		if err != nil {
-			return shrinkCompleteMsg{auto: auto, err: err}
+		summarizable, pinnedUsers := pinUserMessagesForShrink(older)
+		var summary string
+		if len(summarizable) > 0 {
+			var err error
+			summary, err = m.agent.SummarizeHistory(ctx, summarizable)
+			if err != nil {
+				return shrinkCompleteMsg{auto: auto, err: err}
+			}
 		}
 
 		saved := false
-		if turnID != 0 {
+		if turnID != 0 && strings.TrimSpace(summary) != "" {
 			if err := m.repo.Turns.UpdateTurnSummary(turnID, summary); err != nil {
 				return shrinkCompleteMsg{auto: auto, err: fmt.Errorf("save summary: %w", err)}
 			}
@@ -1639,9 +1662,10 @@ func (m *Model) shrinkHistory(ctx context.Context, base []llm.Message, older []l
 
 		return shrinkCompleteMsg{
 			summary:            summary,
-			newHistory:         buildCompressedHistory(base, summary, recent),
-			summarizedMessages: len(older),
-			keptMessages:       len(recent),
+			newHistory:         buildCompressedHistory(base, summary, pinnedUsers, recent),
+			summarizedMessages: len(summarizable),
+			keptMessages:       len(recent) + len(pinnedUsers),
+			pinnedMessages:     len(pinnedUsers),
 			saved:              saved,
 			auto:               auto,
 			beforeTokens:       beforeTokens,

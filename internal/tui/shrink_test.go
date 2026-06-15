@@ -56,7 +56,7 @@ func TestBuildCompressedHistory(t *testing.T) {
 	base := []llm.Message{{Role: "system", Content: "system prompt"}}
 	recent := []llm.Message{{Role: "user", Content: "latest"}}
 
-	compressed := buildCompressedHistory(base, "summary text", recent)
+	compressed := buildCompressedHistory(base, "summary text", nil, recent)
 	if len(compressed) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(compressed))
 	}
@@ -68,6 +68,37 @@ func TestBuildCompressedHistory(t *testing.T) {
 	}
 	if compressed[2].Content != "latest" {
 		t.Fatalf("recent message was not preserved: %#v", compressed[2])
+	}
+}
+
+func TestBuildCompressedHistoryKeepsPinnedUserInstructions(t *testing.T) {
+	base := []llm.Message{{Role: "system", Content: "system prompt"}}
+	pinned := []llm.Message{{Role: "user", Content: "絶対に実装ファイルは編集しないでください"}}
+	recent := []llm.Message{{Role: "assistant", Content: "latest"}}
+
+	compressed := buildCompressedHistory(base, "summary text", pinned, recent)
+	if len(compressed) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(compressed))
+	}
+	if compressed[2].Role != "user" || compressed[2].Content != pinned[0].Content {
+		t.Fatalf("pinned user instruction was not preserved raw: %#v", compressed)
+	}
+}
+
+func TestPinUserMessagesForShrinkExcludesUserInstructionsFromSummary(t *testing.T) {
+	instruction := "この制約は必ず守ってください"
+	summarizable, pinned := pinUserMessagesForShrink([]llm.Message{
+		{Role: "assistant", Content: "old work"},
+		{Role: "user", Content: instruction},
+		{Role: "tool", Content: "old tool result"},
+	})
+	if len(pinned) != 1 || pinned[0].Content != instruction {
+		t.Fatalf("pinned = %#v", pinned)
+	}
+	for _, msg := range summarizable {
+		if msg.Content == instruction {
+			t.Fatalf("user instruction should not be summarized: %#v", summarizable)
+		}
 	}
 }
 

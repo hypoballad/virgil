@@ -93,6 +93,7 @@ type shrinkCompleteMsg struct {
 	newHistory         []llm.Message
 	summarizedMessages int
 	keptMessages       int
+	pinnedMessages     int
 	saved              bool
 	auto               bool
 	beforeTokens       int
