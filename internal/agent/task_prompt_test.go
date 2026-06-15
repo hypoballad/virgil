@@ -17,10 +17,27 @@ func TestTaskTemplateSystemPromptContainsKeyInstructions(t *testing.T) {
 		"具体的な実装コードを書かない",
 		"見出しスケルトン",
 		"章ごとに追記",
+		"ユーザー確認待ち",
+		"宣言文だけで停止しない",
 	}
 	for _, kw := range keywords {
 		if !strings.Contains(taskTemplateSystemPrompt, kw) {
 			t.Errorf("taskTemplateSystemPrompt should contain %q", kw)
+		}
+	}
+}
+
+func TestSystemPromptClarificationMustBeExplicitQuestion(t *testing.T) {
+	required := []string{
+		"waiting for user confirmation",
+		"end with a question mark",
+		"Do not stop after a declarative sentence",
+		"If no confirmation is needed",
+	}
+
+	for _, want := range required {
+		if !strings.Contains(SystemPromptDefault, want) {
+			t.Fatalf("SystemPromptDefault is missing confirmation clarity guidance %q", want)
 		}
 	}
 }
