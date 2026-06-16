@@ -159,7 +159,7 @@ func (w *Watchdog) CheckContextSize(tokenCount int) *StopSignal {
 	if tokenCount > w.config.ContextTokenLimit {
 		return &StopSignal{
 			Reason: StopReasonContextLimit,
-			Detail: fmt.Sprintf("context size %d tokens exceeds limit %d", tokenCount, w.config.ContextTokenLimit),
+			Detail: fmt.Sprintf("context overflow risk: context size %d tokens exceeds limit %d", tokenCount, w.config.ContextTokenLimit),
 		}
 	}
 	return nil

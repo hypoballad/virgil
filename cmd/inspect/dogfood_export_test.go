@@ -120,6 +120,13 @@ func TestIssueBodyIncludesErrorSnippet(t *testing.T) {
 	}
 }
 
+func TestDogfoodErrorSnippetIncludesContextOverflow(t *testing.T) {
+	snippet := extractDogfoodErrorSnippet("debug\nagent: watchdog stop: context_limit - context overflow risk: context size 70000 tokens exceeds limit 65536\nnext")
+	if !strings.Contains(snippet, "context overflow risk") {
+		t.Fatalf("snippet missing context overflow line:\n%s", snippet)
+	}
+}
+
 func newDogfoodTestRepo(t *testing.T) (*repository.Repository, func()) {
 	t.Helper()
 	database, err := db.New(filepath.Join(t.TempDir(), "virgil.db"))

@@ -295,6 +295,10 @@ func extractDogfoodErrorSnippet(logText string) string {
 		"XML syntax error",
 		"context deadline exceeded",
 		"maximum context",
+		"context overflow",
+		"context length",
+		"context shift",
+		"num_ctx",
 	}
 	lines := strings.Split(logText, "\n")
 	selected := map[int]bool{}

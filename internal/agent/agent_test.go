@@ -181,6 +181,21 @@ func TestRunReplacesStaleModeSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptStableForSameMode(t *testing.T) {
+	agent := New(&mockLLM{}, tools.NewRegistry())
+	agent.SetWorkspaceRoot("/tmp/workspace")
+	agent.SetPlanMode(false)
+
+	first := agent.buildSystemPrompt()
+	second := agent.buildSystemPrompt()
+	if first != second {
+		t.Fatal("system prompt should be stable across repeated builds in the same mode")
+	}
+	if strings.Contains(first, "Previous conversation summary") {
+		t.Fatalf("system prompt should not include history-derived dynamic content:\n%s", first)
+	}
+}
+
 func TestTokenCalibrationAppliesEMA(t *testing.T) {
 	agent := New(&mockLLM{}, tools.NewRegistry())
 
@@ -2310,6 +2325,9 @@ func TestAgentRecoversAfterFirstEmptyResponse(t *testing.T) {
 	}
 	if !strings.Contains(last.Content, "Do not make edits unless") {
 		t.Fatalf("recovery prompt should avoid unsolicited edits, got %q", last.Content)
+	}
+	if !strings.Contains(last.Content, "waiting for user confirmation") || !strings.Contains(last.Content, "question mark") {
+		t.Fatalf("recovery prompt should make confirmation waits explicit, got %q", last.Content)
 	}
 	for _, msg := range secondReq.Messages {
 		if msg.Role == "assistant" && msg.Content == "" && len(msg.ToolCalls) == 0 {

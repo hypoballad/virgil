@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -138,5 +139,8 @@ func TestWatchdog_ContextLimit(t *testing.T) {
 	}
 	if signal.Reason != StopReasonContextLimit {
 		t.Errorf("expected reason %s, got %s", StopReasonContextLimit, signal.Reason)
+	}
+	if !strings.Contains(signal.Detail, "context overflow risk") {
+		t.Fatalf("detail should mention context overflow risk, got %q", signal.Detail)
 	}
 }

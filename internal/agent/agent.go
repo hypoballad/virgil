@@ -1917,6 +1917,8 @@ func emptyResponseRecoveryPrompt() string {
 		"Either call the next necessary tool, provide the final answer from the context already gathered, or explain the blocker.\n" +
 		"Do not return an empty response.\n" +
 		"Do not make edits unless the user explicitly requested implementation.\n" +
+		"If you are waiting for user confirmation, say so explicitly and end with a question mark.\n" +
+		"If no confirmation is needed, do not stop after a declaration of intent; continue with the next tool call or final answer.\n" +
 		"If this is an investigation or debug-context request and enough context has been gathered, answer with the likely cause and next verification step."
 }
 
