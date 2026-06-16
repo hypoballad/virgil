@@ -48,6 +48,7 @@ func (t *EditWithPatternTool) Description() string {
 	return "Edit a file by finding and replacing a UNIQUE text pattern. " +
 		"This is the PREFERRED edit method — safer than edit_file (no line number dependency) and more precise than write_file (no risk of accidental changes). " +
 		"find_text must appear EXACTLY ONCE in the file. Include surrounding context to ensure uniqueness. " +
+		"If exact matching fails, a whitespace-tolerant fallback may ignore line-ending and trailing-whitespace differences, but only when it still finds exactly one location. " +
 		"Returns error if find_text is not found or appears multiple times. " +
 		"Automatically validates syntax after edit (for Go/Python files)."
 }
@@ -94,6 +95,11 @@ type editWithPatternArgs struct {
 	ReplaceWith string `json:"replace_with"`
 }
 
+type normalizedPatternMatch struct {
+	Start int
+	End   int
+}
+
 func (t *EditWithPatternTool) Execute(ctx context.Context, argsJSON json.RawMessage) (*Result, error) {
 	var args editWithPatternArgs
 	if err := json.Unmarshal(argsJSON, &args); err != nil {
@@ -132,14 +138,26 @@ func (t *EditWithPatternTool) Execute(ctx context.Context, argsJSON json.RawMess
 
 	// find_text の出現回数チェック
 	count := strings.Count(content, args.FindText)
+	usedNormalizedFallback := false
 	if count == 0 {
-		// 見つからない場合、デバッグヒント
-		hint := buildNotFoundHint(content, args.FindText)
-		return ErrorResult(fmt.Sprintf(
-			"find_text not found in %s.\n\n%s\n\n"+
-				"Tip: Use read_file to see the exact content, then copy the text precisely (including whitespace).",
-			args.Path, hint,
-		)), nil
+		if match, ok, ambiguous := findNormalizedPatternMatch(content, args.FindText); ok {
+			content = content[:match.Start] + args.ReplaceWith + content[match.End:]
+			usedNormalizedFallback = true
+		} else if ambiguous {
+			return ErrorResult(fmt.Sprintf(
+				"find_text not found exactly in %s, and whitespace-tolerant fallback matched multiple locations. "+
+					"Use read_file with a narrow range and include more surrounding context.",
+				args.Path,
+			)), nil
+		} else {
+			// 見つからない場合、デバッグヒント
+			hint := buildNotFoundHint(content, args.FindText)
+			return ErrorResult(fmt.Sprintf(
+				"find_text not found in %s.\n\n%s\n\n"+
+					"Tip: Use read_file to see the exact content, then copy the text precisely (including whitespace).",
+				args.Path, hint,
+			)), nil
+		}
 	}
 	if count > 1 {
 		return ErrorResult(fmt.Sprintf(
@@ -150,7 +168,10 @@ func (t *EditWithPatternTool) Execute(ctx context.Context, argsJSON json.RawMess
 	}
 
 	// 置換実行
-	newContent := strings.Replace(content, args.FindText, args.ReplaceWith, 1)
+	newContent := content
+	if !usedNormalizedFallback {
+		newContent = strings.Replace(content, args.FindText, args.ReplaceWith, 1)
+	}
 
 	// 書き込み
 	if err := os.WriteFile(resolvedPath, []byte(newContent), 0644); err != nil {
@@ -181,8 +202,106 @@ func (t *EditWithPatternTool) Execute(ctx context.Context, argsJSON json.RawMess
 
 	return &Result{
 		IsError: false,
-		Content: fmt.Sprintf("Edit applied to %s (1 replacement, syntax validated)", args.Path),
+		Content: formatEditWithPatternSuccess(args.Path, usedNormalizedFallback),
 	}, nil
+}
+
+func formatEditWithPatternSuccess(path string, normalizedFallback bool) string {
+	if normalizedFallback {
+		return fmt.Sprintf("Edit applied to %s (1 whitespace-tolerant replacement, syntax validated)", path)
+	}
+	return fmt.Sprintf("Edit applied to %s (1 replacement, syntax validated)", path)
+}
+
+func findNormalizedPatternMatch(content, findText string) (normalizedPatternMatch, bool, bool) {
+	contentLines := splitLinesWithOffsets(content)
+	findLines := splitLinesWithOffsets(findText)
+	findLines = trimBlankNormalizedLines(findLines)
+	if len(findLines) == 0 {
+		return normalizedPatternMatch{}, false, false
+	}
+	if len(findLines) > len(contentLines) {
+		return normalizedPatternMatch{}, false, false
+	}
+
+	var matches []normalizedPatternMatch
+	for i := 0; i <= len(contentLines)-len(findLines); i++ {
+		if !normalizedLineEqual(contentLines[i], findLines[0]) {
+			continue
+		}
+		ok := true
+		for j := 1; j < len(findLines); j++ {
+			if !normalizedLineEqual(contentLines[i+j], findLines[j]) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			start := contentLines[i].Start
+			end := contentLines[i+len(findLines)-1].End
+			matches = append(matches, normalizedPatternMatch{Start: start, End: end})
+			if len(matches) > 1 {
+				return normalizedPatternMatch{}, false, true
+			}
+		}
+	}
+	if len(matches) == 0 {
+		return normalizedPatternMatch{}, false, false
+	}
+	return matches[0], true, false
+}
+
+type lineWithOffset struct {
+	Text  string
+	Start int
+	End   int
+}
+
+func splitLinesWithOffsets(s string) []lineWithOffset {
+	if s == "" {
+		return nil
+	}
+	var lines []lineWithOffset
+	start := 0
+	for start < len(s) {
+		end := start
+		for end < len(s) && s[end] != '\n' {
+			end++
+		}
+		lineEnd := end
+		if end < len(s) && s[end] == '\n' {
+			lineEnd = end + 1
+		}
+		lines = append(lines, lineWithOffset{
+			Text:  s[start:lineEnd],
+			Start: start,
+			End:   lineEnd,
+		})
+		start = lineEnd
+	}
+	return lines
+}
+
+func trimBlankNormalizedLines(lines []lineWithOffset) []lineWithOffset {
+	start := 0
+	for start < len(lines) && normalizedLineText(lines[start]) == "" {
+		start++
+	}
+	end := len(lines)
+	for end > start && normalizedLineText(lines[end-1]) == "" {
+		end--
+	}
+	return lines[start:end]
+}
+
+func normalizedLineEqual(a, b lineWithOffset) bool {
+	return normalizedLineText(a) == normalizedLineText(b)
+}
+
+func normalizedLineText(line lineWithOffset) string {
+	text := strings.TrimSuffix(line.Text, "\n")
+	text = strings.TrimSuffix(text, "\r")
+	return strings.TrimRight(text, " \t")
 }
 
 // buildNotFoundHint は find_text が見つからない時のデバッグヒントを返す
