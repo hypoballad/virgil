@@ -685,7 +685,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 		if hasSystem {
 			historyToAppend = history[1:]
 		}
-	} else if !hasSystem {
+	} else {
 		systemPrompt := systemPromptOverride
 		systemPrompt = a.buildSystemPrompt()
 		if systemPrompt != "" {
@@ -693,6 +693,9 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				Role:    "system",
 				Content: systemPrompt,
 			})
+		}
+		if hasSystem {
+			historyToAppend = history[1:]
 		}
 	}
 

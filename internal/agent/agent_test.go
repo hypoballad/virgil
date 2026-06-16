@@ -148,6 +148,39 @@ func TestAgentNoTools(t *testing.T) {
 	}
 }
 
+func TestRunReplacesStaleModeSystemPrompt(t *testing.T) {
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{Message: llm.Message{Role: "assistant", Content: "done"}},
+		},
+	}
+	agent := New(mockLLM, tools.NewRegistry())
+	agent.SetPlanMode(false)
+
+	_, err := agent.Run(context.Background(), []llm.Message{
+		{Role: "system", Content: SystemPromptModePlan},
+		{Role: "system", Content: "Previous conversation summary, compressed by /shrink:\n\nsummary"},
+		{Role: "user", Content: "old instruction"},
+	}, "continue")
+	if err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+
+	req := mockLLM.requests[0]
+	if len(req.Messages) < 3 {
+		t.Fatalf("request messages = %#v", req.Messages)
+	}
+	if !strings.Contains(req.Messages[0].Content, "You are in EDIT mode") {
+		t.Fatalf("first system prompt did not reflect current edit mode:\n%s", req.Messages[0].Content)
+	}
+	if strings.Contains(req.Messages[0].Content, "You are in PLAN mode") {
+		t.Fatalf("first system prompt still contains stale plan mode:\n%s", req.Messages[0].Content)
+	}
+	if !strings.Contains(req.Messages[1].Content, "Previous conversation summary") {
+		t.Fatalf("shrink summary system message should remain after replacing mode prompt: %#v", req.Messages)
+	}
+}
+
 func TestTokenCalibrationAppliesEMA(t *testing.T) {
 	agent := New(&mockLLM{}, tools.NewRegistry())
 
