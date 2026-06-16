@@ -100,6 +100,73 @@ func TestEditFileDelete(t *testing.T) {
 	}
 }
 
+func TestEditFileAcceptsExpectedLineHashes(t *testing.T) {
+	tmpDir, _ := os.MkdirTemp("", "edit-test-*")
+	defer os.RemoveAll(tmpDir)
+
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("line 1\nline 2\nline 3\n"), 0644)
+
+	tool := NewEditFileTool(tmpDir)
+	args, _ := json.Marshal(map[string]interface{}{
+		"path":                "test.txt",
+		"start_line":          2,
+		"end_line":            2,
+		"expected_start_hash": "h:" + lineHash("line 2"),
+		"expected_end_hash":   "[h:" + lineHash("line 2") + "]",
+		"new_lines":           []string{"updated line 2"},
+	})
+
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", result.Content)
+	}
+
+	content, _ := os.ReadFile(testFile)
+	expected := "line 1\nupdated line 2\nline 3\n"
+	if string(content) != expected {
+		t.Fatalf("expected %q, got %q", expected, string(content))
+	}
+}
+
+func TestEditFileRejectsMismatchedLineHash(t *testing.T) {
+	tmpDir, _ := os.MkdirTemp("", "edit-test-*")
+	defer os.RemoveAll(tmpDir)
+
+	testFile := filepath.Join(tmpDir, "test.txt")
+	initial := "line 1\nline 2\nline 3\n"
+	os.WriteFile(testFile, []byte(initial), 0644)
+
+	tool := NewEditFileTool(tmpDir)
+	args, _ := json.Marshal(map[string]interface{}{
+		"path":                "test.txt",
+		"start_line":          2,
+		"end_line":            2,
+		"expected_start_hash": "h:00000000",
+		"expected_end_hash":   "h:" + lineHash("line 2"),
+		"new_lines":           []string{"updated line 2"},
+	})
+
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected hash mismatch error, got success: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "line hash mismatch") || !strings.Contains(result.Content, "re-read a narrow range") {
+		t.Fatalf("unexpected error: %s", result.Content)
+	}
+
+	content, _ := os.ReadFile(testFile)
+	if string(content) != initial {
+		t.Fatalf("file changed despite hash mismatch:\n%s", string(content))
+	}
+}
+
 func TestEditFileOutOfRange(t *testing.T) {
 	tmpDir, _ := os.MkdirTemp("", "edit-test-*")
 	defer os.RemoveAll(tmpDir)

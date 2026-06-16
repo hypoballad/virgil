@@ -33,10 +33,12 @@ func (t *EditFileTool) SetValidator(v *ASTValidator) {
 }
 
 type editFileArgs struct {
-	Path      string          `json:"path"`
-	StartLine int             `json:"start_line"` // 1-indexed
-	EndLine   int             `json:"end_line"`   // 1-indexed, inclusive
-	NewLines  json.RawMessage `json:"new_lines"`  // 改行を含む文字列または配列を許容するためRawMessageにする
+	Path              string          `json:"path"`
+	StartLine         int             `json:"start_line"` // 1-indexed
+	EndLine           int             `json:"end_line"`   // 1-indexed, inclusive
+	ExpectedStartHash string          `json:"expected_start_hash,omitempty"`
+	ExpectedEndHash   string          `json:"expected_end_hash,omitempty"`
+	NewLines          json.RawMessage `json:"new_lines"` // 改行を含む文字列または配列を許容するためRawMessageにする
 }
 
 func NewEditFileTool(allowedRoot string) *EditFileTool {
@@ -76,6 +78,14 @@ func (t *EditFileTool) Definition() ToolDefinition {
 						"type":        "integer",
 						"description": "End line number (1-indexed, inclusive)",
 						"minimum":     1,
+					},
+					"expected_start_hash": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional short hash for start_line copied from read_file output, e.g. h:abcd1234. When provided, edit_file rejects the edit if the line has changed.",
+					},
+					"expected_end_hash": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional short hash for end_line copied from read_file output, e.g. h:abcd1234. When provided, edit_file rejects the edit if the line has changed.",
 					},
 					"new_lines": map[string]interface{}{
 						"type":        "array",
@@ -171,6 +181,12 @@ func (t *EditFileTool) Execute(ctx context.Context, rawArgs json.RawMessage) (*R
 	}
 	if args.EndLine > len(existingLines) {
 		return ErrorResult(fmt.Sprintf("end_line (%d) exceeds file length (%d lines)", args.EndLine, len(existingLines))), nil
+	}
+	if err := validateExpectedLineHash(args.Path, args.StartLine, existingLines[args.StartLine-1], args.ExpectedStartHash); err != nil {
+		return ErrorResult(err.Error()), nil
+	}
+	if err := validateExpectedLineHash(args.Path, args.EndLine, existingLines[args.EndLine-1], args.ExpectedEndHash); err != nil {
+		return ErrorResult(err.Error()), nil
 	}
 
 	// 新しい行配列を構築

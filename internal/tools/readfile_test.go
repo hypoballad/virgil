@@ -35,7 +35,7 @@ func TestReadFileTool(t *testing.T) {
 		if result.IsError {
 			t.Errorf("unexpected tool error: %s", result.Content)
 		}
-		if !strings.Contains(result.Content, "1 | hello world") {
+		if !strings.Contains(result.Content, "1 | [h:") || !strings.Contains(result.Content, "] hello world") {
 			t.Errorf("expected content not found: %s", result.Content)
 		}
 		if result.Metadata["mode"] != "full" {
@@ -63,7 +63,8 @@ func TestReadFileTool(t *testing.T) {
 		if len(lines) != 5 {
 			t.Errorf("expected 5 lines (including header), got %d: %v", len(lines), lines)
 		}
-		if !strings.Contains(lines[2], "2 | line 2") || !strings.Contains(lines[4], "4 | line 4") {
+		if !strings.Contains(lines[2], "2 | [h:") || !strings.Contains(lines[2], "] line 2") ||
+			!strings.Contains(lines[4], "4 | [h:") || !strings.Contains(lines[4], "] line 4") {
 			t.Errorf("unexpected content: %v", lines)
 		}
 		if result.Metadata["mode"] != "range" {
@@ -113,7 +114,8 @@ func TestReadFileTool(t *testing.T) {
 		if result.IsError {
 			t.Fatalf("unexpected tool error: %s", result.Content)
 		}
-		if !strings.Contains(result.Content, "3 | ## Section") || !strings.Contains(result.Content, "5 | body") {
+		if !strings.Contains(result.Content, "3 | [h:") || !strings.Contains(result.Content, "] ## Section") ||
+			!strings.Contains(result.Content, "5 | [h:") || !strings.Contains(result.Content, "] body") {
 			t.Fatalf("expected range content, got:\n%s", result.Content)
 		}
 	})

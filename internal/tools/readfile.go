@@ -276,7 +276,7 @@ func (t *ReadFileTool) readFull(path string) (*Result, error) {
 		if i >= lineCount {
 			break
 		}
-		sb.WriteString(fmt.Sprintf("%4d | %s\n", i+1, line))
+		sb.WriteString(formatReadLine(i+1, line))
 	}
 
 	result := SuccessResult(sb.String())
@@ -318,7 +318,7 @@ func (t *ReadFileTool) readRange(path string, startLine, endLine int) (*Result, 
 		if endLine > 0 && lineNum > endLine {
 			break
 		}
-		sb.WriteString(fmt.Sprintf("%4d | %s\n", lineNum, scanner.Text()))
+		sb.WriteString(formatReadLine(lineNum, scanner.Text()))
 		actualLines++
 	}
 
