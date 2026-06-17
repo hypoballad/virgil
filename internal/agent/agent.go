@@ -830,6 +830,16 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 		// tool_callsがなければ最終応答
 		if len(chatResp.Message.ToolCalls) == 0 {
 			content := chatResp.Message.Content
+			if isIncompleteNoToolResponse(content) {
+				log.Printf("agent: no-tool response looked incomplete; prompting model to continue")
+				messages = append(messages, chatResp.Message)
+				messages = append(messages, llm.Message{
+					Role:    "user",
+					Content: incompleteNoToolResponseRecoveryPrompt(),
+				})
+				response.Messages = messages
+				continue
+			}
 			if structuralRecovery.Required {
 				log.Printf("agent: final response blocked until structural read after safety guard")
 				messages = append(messages, chatResp.Message)
@@ -1922,6 +1932,66 @@ func emptyResponseRecoveryPrompt() string {
 		"If you are waiting for user confirmation, say so explicitly and end with a question mark.\n" +
 		"If no confirmation is needed, do not stop after a declaration of intent; continue with the next tool call or final answer.\n" +
 		"If this is an investigation or debug-context request and enough context has been gathered, answer with the likely cause and next verification step."
+}
+
+func isIncompleteNoToolResponse(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" || strings.HasSuffix(trimmed, "?") || strings.HasSuffix(trimmed, "？") {
+		return false
+	}
+
+	lower := strings.ToLower(trimmed)
+	englishMarkers := []string{
+		"let me check",
+		"let me also check",
+		"let me inspect",
+		"let me read",
+		"i'll check",
+		"i'll inspect",
+		"i'll read",
+		"i'll look",
+		"i will check",
+		"i will inspect",
+		"i will read",
+		"i will look",
+		"i need to check",
+		"i need to inspect",
+		"i need to read",
+	}
+	for _, marker := range englishMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+
+	japaneseMarkers := []string{
+		"確認します",
+		"調査します",
+		"見ます",
+		"読みます",
+		"調べます",
+		"実行します",
+		"編集します",
+		"修正します",
+		"次に確認",
+		"次に調査",
+		"次に読み",
+		"これから確認",
+		"これから調査",
+	}
+	for _, marker := range japaneseMarkers {
+		if strings.Contains(trimmed, marker) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func incompleteNoToolResponseRecoveryPrompt() string {
+	return "Your previous response appears incomplete: it described an intended next action, but made no tool call and did not ask a question.\n" +
+		"Continue the task now. If another tool is needed, call it. If enough context has been gathered, provide the final answer with concrete findings and next steps.\n" +
+		"Do not stop after restating what you are about to do."
 }
 
 type responseMetadata struct {
