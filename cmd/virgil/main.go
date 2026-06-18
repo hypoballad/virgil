@@ -263,6 +263,7 @@ func main() {
 	agentInst.SetRepository(repo)
 	agentInst.SetWorkspaceRoot(workspaceRoot)
 	agentInst.SetToolProfile(toolProfile)
+	agentInst.SetResponseLanguage(os.Getenv("VIRGIL_RESPONSE_LANGUAGE"))
 
 	// Watchdog configuration
 	watchdogConfig := agent.DefaultWatchdogConfig()

@@ -7,18 +7,18 @@ import (
 
 func TestTaskTemplateSystemPromptContainsKeyInstructions(t *testing.T) {
 	keywords := []string{
-		"TODO リスト",
-		"結果報告",
+		"TODO list",
+		"## Result",
 		"edit_file",
-		"ワークスペースルート",
-		"スコープ制御",
-		"追加探索をせず最終報告",
-		"検証成功後",
-		"具体的な実装コードを書かない",
-		"見出しスケルトン",
-		"章ごとに追記",
-		"ユーザー確認待ち",
-		"宣言文だけで停止しない",
+		"workspace root",
+		"Scope Control",
+		"without extra exploration",
+		"After verification succeeds",
+		"do not write concrete implementation code",
+		"heading skeleton",
+		"append bounded sections",
+		"Waiting For User Confirmation",
+		"Do not stop after a declarative sentence",
 	}
 	for _, kw := range keywords {
 		if !strings.Contains(taskTemplateSystemPrompt, kw) {
@@ -33,6 +33,7 @@ func TestSystemPromptClarificationMustBeExplicitQuestion(t *testing.T) {
 		"end with a question mark",
 		"Do not stop after a declarative sentence",
 		"If no confirmation is needed",
+		"Match the user's response language",
 	}
 
 	for _, want := range required {
@@ -114,10 +115,11 @@ func TestIsIncompleteTaskTemplateResponseVariations(t *testing.T) {
 	}{
 		{"", false},
 		{"  ## 結果報告  ", false},
-		{"TODO リスト\\n- [ ] Do something", true},
+		{"  ## Result  ", false},
+		{"TODO list\\n- [ ] Do something", true},
 		{"Some random text with TODO", false},
-		{"TODO リスト\\n[ ] Do something", true},
-		{"TODO リスト\\nDo something", false},
+		{"TODO:\\n[ ] Do something", true},
+		{"TODO list\\nDo something", false},
 	}
 	for _, tt := range tests {
 		if got := isIncompleteTaskTemplateResponse(tt.content); got != tt.want {

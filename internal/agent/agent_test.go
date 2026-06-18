@@ -250,6 +250,34 @@ func TestBuildSystemPromptStableForSameMode(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptIncludesResponseLanguageInstruction(t *testing.T) {
+	agent := New(&mockLLM{}, tools.NewRegistry())
+
+	if prompt := agent.buildSystemPrompt(); !strings.Contains(prompt, "Match the user's language") {
+		t.Fatalf("auto response language instruction missing:\n%s", prompt)
+	}
+
+	agent.SetResponseLanguage("ja")
+	if prompt := agent.buildSystemPrompt(); !strings.Contains(prompt, "Respond to the user in Japanese") {
+		t.Fatalf("Japanese response language instruction missing:\n%s", prompt)
+	}
+
+	agent.SetResponseLanguage("en")
+	if prompt := agent.buildSystemPrompt(); !strings.Contains(prompt, "Respond to the user in English") {
+		t.Fatalf("English response language instruction missing:\n%s", prompt)
+	}
+}
+
+func TestBuildTaskSystemPromptIncludesResponseLanguageInstruction(t *testing.T) {
+	agent := New(&mockLLM{}, tools.NewRegistry())
+	agent.SetResponseLanguage("ja")
+
+	prompt := agent.buildTaskSystemPrompt()
+	if !strings.Contains(prompt, "Respond to the user in Japanese") {
+		t.Fatalf("task prompt missing response language instruction:\n%s", prompt)
+	}
+}
+
 func TestTokenCalibrationAppliesEMA(t *testing.T) {
 	agent := New(&mockLLM{}, tools.NewRegistry())
 
@@ -929,7 +957,7 @@ func TestRunTaskUsesTemplatePromptAndHistory(t *testing.T) {
 	if len(req.Messages) < 3 {
 		t.Fatalf("expected system, history, and user messages, got %d", len(req.Messages))
 	}
-	if !strings.Contains(req.Messages[0].Content, "TODO リスト") {
+	if !strings.Contains(req.Messages[0].Content, "TODO list") {
 		t.Fatalf("system prompt does not include task template: %q", req.Messages[0].Content)
 	}
 	if strings.Contains(req.Messages[0].Content, "old system prompt") {
@@ -992,7 +1020,7 @@ func TestRunTaskContinuesWhenModelOnlyReturnsTodoList(t *testing.T) {
 	secondReq := mockLLM.requests[1]
 	foundContinuePrompt := false
 	for _, msg := range secondReq.Messages {
-		if msg.Role == "user" && strings.Contains(msg.Content, "TODO リストだけで停止しています") {
+		if msg.Role == "user" && strings.Contains(msg.Content, "stopped after outputting only a TODO list") {
 			foundContinuePrompt = true
 			break
 		}
@@ -1043,7 +1071,7 @@ func TestRunTaskRequiresSavedArtifactWhenRequested(t *testing.T) {
 	secondReq := mockLLM.requests[1]
 	foundSavePrompt := false
 	for _, msg := range secondReq.Messages {
-		if msg.Role == "user" && strings.Contains(msg.Content, "指定された成果物を保存してください") {
+		if msg.Role == "user" && strings.Contains(msg.Content, "Save the requested artifact") {
 			foundSavePrompt = true
 			break
 		}
@@ -2279,8 +2307,27 @@ func TestAgentStopsExplorationAfterSuccessfulVerification(t *testing.T) {
 	if findSymbol.calls != 0 {
 		t.Fatalf("find_symbol calls = %d, want 0", findSymbol.calls)
 	}
-	if !strings.Contains(resp.FinalContent, "検証成功後の追加探索を停止") {
+	if !strings.Contains(resp.FinalContent, "Stopping extra exploration") {
 		t.Fatalf("final content = %q", resp.FinalContent)
+	}
+}
+
+func TestLocalizedResponseHonorsLanguageSetting(t *testing.T) {
+	agent := New(&mockLLM{}, tools.NewRegistry())
+
+	if got := agent.localizedResponse("日本語の依頼", "日本語", "English"); got != "日本語" {
+		t.Fatalf("auto Japanese response = %q", got)
+	}
+	if got := agent.localizedResponse("English request", "日本語", "English"); got != "English" {
+		t.Fatalf("auto English response = %q", got)
+	}
+	agent.SetResponseLanguage("ja")
+	if got := agent.localizedResponse("English request", "日本語", "English"); got != "日本語" {
+		t.Fatalf("forced Japanese response = %q", got)
+	}
+	agent.SetResponseLanguage("en")
+	if got := agent.localizedResponse("日本語の依頼", "日本語", "English"); got != "English" {
+		t.Fatalf("forced English response = %q", got)
 	}
 }
 

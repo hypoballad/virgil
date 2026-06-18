@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/hypoballad/virgil/internal/llm"
 	"github.com/hypoballad/virgil/internal/repository"
@@ -145,6 +146,7 @@ type Agent struct {
 	planMode             bool                   // 追加: trueなら書き込み系ツールを除外
 	tokenCalibration     float64
 	toolProfile          string
+	responseLanguage     string
 }
 
 type Response struct {
@@ -190,6 +192,7 @@ func New(llmClient LLMClient, registry *tools.Registry) *Agent {
 		systemPromptTemplate: SystemPromptDefault,
 		tokenCalibration:     1.0,
 		toolProfile:          ToolProfileDefault,
+		responseLanguage:     ResponseLanguageAuto,
 	}
 }
 
@@ -201,6 +204,31 @@ func (a *Agent) SetShadowRepo(repo *shadow.ShadowRepo) {
 // SetSystemPrompt はシステムプロンプトをカスタマイズ
 func (a *Agent) SetSystemPrompt(prompt string) {
 	a.systemPromptTemplate = prompt
+}
+
+const (
+	ResponseLanguageAuto = "auto"
+	ResponseLanguageJA   = "ja"
+	ResponseLanguageEN   = "en"
+)
+
+func normalizeResponseLanguage(language string) string {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case ResponseLanguageJA, "japanese":
+		return ResponseLanguageJA
+	case ResponseLanguageEN, "english":
+		return ResponseLanguageEN
+	default:
+		return ResponseLanguageAuto
+	}
+}
+
+func (a *Agent) SetResponseLanguage(language string) {
+	a.responseLanguage = normalizeResponseLanguage(language)
+}
+
+func (a *Agent) ResponseLanguage() string {
+	return normalizeResponseLanguage(a.responseLanguage)
 }
 
 // SetWatchdogConfig はウォッチドッグ設定をカスタマイズ
@@ -485,7 +513,43 @@ func (a *Agent) buildSystemPrompt() string {
 		prompt += "\n\n# Tool Profile\n\nTool profile: small. Some advanced tools are hidden to save context. Use the available core tools first; if a hidden advanced tool is needed, explain that limitation to the user.\n"
 	}
 
+	prompt += responseLanguageInstruction(a.ResponseLanguage())
+
 	return prompt
+}
+
+func responseLanguageInstruction(language string) string {
+	switch normalizeResponseLanguage(language) {
+	case ResponseLanguageJA:
+		return "\n\n# User Response Language\n\nRespond to the user in Japanese. Keep internal tool-use decisions and tool-facing behavior governed by the English system instructions above.\n"
+	case ResponseLanguageEN:
+		return "\n\n# User Response Language\n\nRespond to the user in English. Keep internal tool-use decisions and tool-facing behavior governed by the English system instructions above.\n"
+	default:
+		return "\n\n# User Response Language\n\nMatch the user's language for visible responses: answer in Japanese when the user writes in Japanese, otherwise answer in English. Keep internal tool-use decisions and tool-facing behavior governed by the English system instructions above.\n"
+	}
+}
+
+func (a *Agent) localizedResponse(userInput, japanese, english string) string {
+	switch a.ResponseLanguage() {
+	case ResponseLanguageJA:
+		return japanese
+	case ResponseLanguageEN:
+		return english
+	default:
+		if containsJapaneseText(userInput) {
+			return japanese
+		}
+		return english
+	}
+}
+
+func containsJapaneseText(text string) bool {
+	for _, r := range text {
+		if unicode.In(r, unicode.Hiragana, unicode.Katakana, unicode.Han) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Agent) RunBtw(ctx context.Context, history []llm.Message, question string) (*Response, error) {
@@ -855,7 +919,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				messages = append(messages, chatResp.Message)
 				messages = append(messages, llm.Message{
 					Role:    "user",
-					Content: "TODO リストだけで停止しています。最終回答にせず、最初の未完了 TODO の作業を必要なツール呼び出しで今すぐ開始してください。指定された検証が通ったら追加探索せず ## 結果報告 で終了してください。",
+					Content: "You stopped after outputting only a TODO list. Do not provide the final answer yet. Start the first incomplete TODO now with the required tool call. After the requested verification passes, stop extra exploration and finish with ## Result.",
 				})
 				response.Messages = messages
 				continue
@@ -865,7 +929,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				messages = append(messages, chatResp.Message)
 				messages = append(messages, llm.Message{
 					Role:    "user",
-					Content: "ユーザーは計画書・ドキュメント・ファイルを指定パスへ保存するよう依頼していますが、まだファイル作成/編集ツールが成功していません。最終回答にせず、write_file/edit_file/edit_with_pattern で指定された成果物を保存してください。具体的なコードを書かない指示がある場合は、Markdown の計画書だけを保存してください。保存後に ## 結果報告 で終了してください。",
+					Content: "The user asked you to save a plan, document, or file at a specific path, but no file creation or edit tool has succeeded yet. Do not provide the final answer. Save the requested artifact with write_file/edit_file/edit_with_pattern. If the user said not to write concrete code, save only the Markdown plan or document. After saving it, finish with ## Result.",
 				})
 				response.Messages = messages
 				continue
@@ -919,7 +983,10 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 			}
 
 			if verificationSucceeded && isExploratoryTool(tc.Function.Name) {
-				final := "指定された検証は成功済みです。検証成功後の追加探索を停止し、ここで完了します。"
+				final := a.localizedResponse(userInput,
+					"指定された検証は成功済みです。検証成功後の追加探索を停止し、ここで完了します。",
+					"The requested verification has already passed. Stopping extra exploration after successful verification and completing here.",
+				)
 				log.Printf("agent: stopping exploratory tool %q after successful verification", tc.Function.Name)
 				response.FinalContent = final
 				response.Structured = &StructuredResponse{
