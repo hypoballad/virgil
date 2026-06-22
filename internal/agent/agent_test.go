@@ -1030,6 +1030,55 @@ func TestRunTaskContinuesWhenModelOnlyReturnsTodoList(t *testing.T) {
 	}
 }
 
+func TestRunContinuesWhenModelReturnsPartialProgressReport(t *testing.T) {
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						testToolCall("read_tool"),
+					},
+				},
+			},
+			{
+				Message: llm.Message{
+					Role:    "assistant",
+					Content: "### Progress Report\n\nCurrent Status: I checked the outline.\n\nRemaining Work:\n1. Read the missing methods.\n2. Verify the implementation.",
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "Final finding: AE_opt is still incomplete."}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	registry.Register(&dummyTool{name: "read_tool", response: "outline"})
+
+	agent := New(mockLLM, registry)
+	resp, err := agent.Run(context.Background(), nil, "AE_opt の未実装箇所を調査して")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mockLLM.callCount != 3 {
+		t.Fatalf("LLM calls = %d, want 3", mockLLM.callCount)
+	}
+	if resp.FinalContent != "Final finding: AE_opt is still incomplete." {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+
+	thirdReq := mockLLM.requests[2]
+	foundContinuePrompt := false
+	for _, msg := range thirdReq.Messages {
+		if msg.Role == "user" && strings.Contains(msg.Content, "partial progress report") {
+			foundContinuePrompt = true
+			break
+		}
+	}
+	if !foundContinuePrompt {
+		t.Fatalf("third request did not include partial progress prompt: %#v", thirdReq.Messages)
+	}
+}
+
 func TestRunTaskRequiresSavedArtifactWhenRequested(t *testing.T) {
 	mockLLM := &mockLLM{
 		responses: []llm.ChatResponse{

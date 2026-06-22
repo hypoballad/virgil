@@ -904,6 +904,16 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				response.Messages = messages
 				continue
 			}
+			if response.Iterations > 1 && isPartialProgressNoToolResponse(content) {
+				log.Printf("agent: no-tool response looked like a partial progress report; prompting model to continue")
+				messages = append(messages, chatResp.Message)
+				messages = append(messages, llm.Message{
+					Role:    "user",
+					Content: partialProgressNoToolResponseRecoveryPrompt(),
+				})
+				response.Messages = messages
+				continue
+			}
 			if structuralRecovery.Required {
 				log.Printf("agent: final response blocked until structural read after safety guard")
 				messages = append(messages, chatResp.Message)
@@ -2059,6 +2069,63 @@ func incompleteNoToolResponseRecoveryPrompt() string {
 	return "Your previous response appears incomplete: it described an intended next action, but made no tool call and did not ask a question.\n" +
 		"Continue the task now. If another tool is needed, call it. If enough context has been gathered, provide the final answer with concrete findings and next steps.\n" +
 		"Do not stop after restating what you are about to do."
+}
+
+func isPartialProgressNoToolResponse(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" || strings.HasSuffix(trimmed, "?") || strings.HasSuffix(trimmed, "？") {
+		return false
+	}
+
+	lower := strings.ToLower(trimmed)
+	progressMarkers := []string{
+		"progress report",
+		"current status",
+		"partial result",
+		"partial progress",
+		"途中報告",
+		"進捗報告",
+		"現在の状況",
+		"現状",
+	}
+	remainingMarkers := []string{
+		"remaining work",
+		"remaining tasks",
+		"still need",
+		"not implemented yet",
+		"hasn't been implemented yet",
+		"next steps",
+		"残タスク",
+		"残作業",
+		"残りの作業",
+		"未完了",
+		"まだ未実装",
+		"次の作業",
+	}
+
+	hasProgress := false
+	for _, marker := range progressMarkers {
+		if strings.Contains(lower, marker) || strings.Contains(trimmed, marker) {
+			hasProgress = true
+			break
+		}
+	}
+	if !hasProgress {
+		return false
+	}
+
+	for _, marker := range remainingMarkers {
+		if strings.Contains(lower, marker) || strings.Contains(trimmed, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func partialProgressNoToolResponseRecoveryPrompt() string {
+	return "Your previous response looked like a partial progress report and listed remaining work, but it made no tool call and did not ask the user to choose a stopping point.\n" +
+		"Do not treat that as the final answer. Continue with the next necessary tool call or, if no more work can be done without user input, explicitly ask the user one concrete question.\n" +
+		"If the user asked for investigation only, finish only after giving concrete findings, evidence, and the next verification step without labeling unresolved work as remaining work."
 }
 
 type responseMetadata struct {
