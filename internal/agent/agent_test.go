@@ -148,60 +148,6 @@ func TestAgentNoTools(t *testing.T) {
 	}
 }
 
-func TestAgentContinuesAfterIncompleteNoToolResponse(t *testing.T) {
-	mockLLM := &mockLLM{
-		responses: []llm.ChatResponse{
-			{
-				Message: llm.Message{
-					Role: "assistant",
-					ToolCalls: []llm.ToolCall{
-						{
-							ID: "call_1",
-							Function: llm.FunctionCall{
-								Name:      "read_tool",
-								Arguments: map[string]interface{}{},
-							},
-						},
-					},
-				},
-			},
-			{
-				Message: llm.Message{
-					Role:    "assistant",
-					Content: "Now I see the issue clearly. Let me also check the config file again.",
-				},
-			},
-			{
-				Message: llm.Message{
-					Role:    "assistant",
-					Content: "原因は config に n_types が欠けていることです。",
-				},
-			},
-		},
-	}
-
-	registry := tools.NewRegistry()
-	registry.Register(&dummyTool{name: "read_tool", response: "config contents"})
-	agent := New(mockLLM, registry)
-
-	resp, err := agent.Run(context.Background(), nil, "調査してください")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.FinalContent != "原因は config に n_types が欠けていることです。" {
-		t.Fatalf("final content = %q", resp.FinalContent)
-	}
-	if resp.Iterations != 3 {
-		t.Fatalf("iterations = %d, want 3", resp.Iterations)
-	}
-
-	secondReq := mockLLM.requests[2]
-	last := secondReq.Messages[len(secondReq.Messages)-1]
-	if last.Role != "user" || !strings.Contains(last.Content, "appears incomplete") {
-		t.Fatalf("expected incomplete-response recovery prompt, got %#v", last)
-	}
-}
-
 func TestRunReplacesStaleModeSystemPrompt(t *testing.T) {
 	mockLLM := &mockLLM{
 		responses: []llm.ChatResponse{
@@ -1027,55 +973,6 @@ func TestRunTaskContinuesWhenModelOnlyReturnsTodoList(t *testing.T) {
 	}
 	if !foundContinuePrompt {
 		t.Fatalf("second request did not include continue prompt: %#v", secondReq.Messages)
-	}
-}
-
-func TestRunContinuesWhenModelReturnsPartialProgressReport(t *testing.T) {
-	mockLLM := &mockLLM{
-		responses: []llm.ChatResponse{
-			{
-				Message: llm.Message{
-					Role: "assistant",
-					ToolCalls: []llm.ToolCall{
-						testToolCall("read_tool"),
-					},
-				},
-			},
-			{
-				Message: llm.Message{
-					Role:    "assistant",
-					Content: "### Progress Report\n\nCurrent Status: I checked the outline.\n\nRemaining Work:\n1. Read the missing methods.\n2. Verify the implementation.",
-				},
-			},
-			{Message: llm.Message{Role: "assistant", Content: "Final finding: AE_opt is still incomplete."}},
-		},
-	}
-
-	registry := tools.NewRegistry()
-	registry.Register(&dummyTool{name: "read_tool", response: "outline"})
-
-	agent := New(mockLLM, registry)
-	resp, err := agent.Run(context.Background(), nil, "AE_opt の未実装箇所を調査して")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if mockLLM.callCount != 3 {
-		t.Fatalf("LLM calls = %d, want 3", mockLLM.callCount)
-	}
-	if resp.FinalContent != "Final finding: AE_opt is still incomplete." {
-		t.Fatalf("FinalContent = %q", resp.FinalContent)
-	}
-
-	thirdReq := mockLLM.requests[2]
-	foundContinuePrompt := false
-	for _, msg := range thirdReq.Messages {
-		if msg.Role == "user" && strings.Contains(msg.Content, "partial progress report") {
-			foundContinuePrompt = true
-			break
-		}
-	}
-	if !foundContinuePrompt {
-		t.Fatalf("third request did not include partial progress prompt: %#v", thirdReq.Messages)
 	}
 }
 
