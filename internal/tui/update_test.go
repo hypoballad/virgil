@@ -72,6 +72,21 @@ func TestIterationPausePromptMentionsContinueAndAbort(t *testing.T) {
 	}
 }
 
+func TestContextLimitPausePromptMakesPartialStateExplicit(t *testing.T) {
+	prompt := contextLimitPausePrompt("context size exceeded")
+	for _, want := range []string{
+		"Paused by context limit, not complete",
+		"partial progress summary, not a final answer",
+		"/shrink",
+		"send a follow-up instruction",
+		"Do not use /continue",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("context limit prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestAbortClearsAwaitingContinuation(t *testing.T) {
 	m := testModel()
 	m.awaitingContinuation = true

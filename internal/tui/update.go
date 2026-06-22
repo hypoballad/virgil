@@ -396,12 +396,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					icon = "⚠️"
 					label = "Watchdog stop"
 				}
-				cmds = append(cmds, m.printSystem(fmt.Sprintf(
-					"%s %s: %s\nThe agent stopped automatically. Review the partial result above.",
-					icon, label, signal.Detail,
-				)))
 				if signal.Reason == agent.StopReasonContextLimit {
-					cmds = append(cmds, m.printSystem("Context is at the limit. Type /shrink to compress older history, then continue."))
+					cmds = append(cmds, m.printSystem(contextLimitPausePrompt(signal.Detail)))
+				} else {
+					cmds = append(cmds, m.printSystem(fmt.Sprintf(
+						"%s %s: %s\nThe agent stopped automatically. Review the partial result above.",
+						icon, label, signal.Detail,
+					)))
 				}
 			}
 
@@ -1282,6 +1283,19 @@ func iterationPausePrompt(maxIterations int) string {
 	return fmt.Sprintf("⚠️ The agent has reached the maximum of %d iterations.\n", maxIterations) +
 		"Review the partial result above. Do you want the agent to continue?\n" +
 		fmt.Sprintf("Type /continue to proceed for another %d iterations, or /abort to stop.", agent.MaxIterations)
+}
+
+func contextLimitPausePrompt(detail string) string {
+	return fmt.Sprintf(
+		"📦 Context limit: %s\n"+
+			"⚠️ Paused by context limit, not complete.\n"+
+			"The report above is a partial progress summary, not a final answer.\n\n"+
+			"To continue:\n"+
+			"1. Type /shrink to compress older history.\n"+
+			"2. Then send a follow-up instruction to continue from the context-limit stop.\n"+
+			"Do not use /continue for this stop; it only resumes iteration-limit pauses.",
+		detail,
+	)
 }
 
 func (m Model) continuePausedAgent() (tea.Model, tea.Cmd) {
