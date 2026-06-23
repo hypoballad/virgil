@@ -171,12 +171,12 @@ func TestSlashCommandHelpIsFilteredByDefault(t *testing.T) {
 	m := testModel()
 	help := m.slashCommandHelp()
 
-	for _, want := range []string{"/rewind", "/task <task>", "/tasks <path>", "/do <id>", "/breakdown", "/breakdown-last", "/copy-last", "/btw <task>", "/reindex", "/shrink", "/unstuck", "/debug-context", "/vmax", "virgil fullpower"} {
+	for _, want := range []string{"/rewind", "/task <task>", "/tasks <path>", "/do <id>", "/breakdown", "/breakdown-last", "/copy-last", "/btw <task>", "/reindex", "/shrink", "/debug-context", "/vmax", "virgil fullpower"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("default help missing %q: %s", want, help)
 		}
 	}
-	for _, hidden := range []string{"/confirm-run", "/reject-run", "/callers", "/callgraph"} {
+	for _, hidden := range []string{"/confirm-run", "/reject-run", "/callers", "/callgraph", "/last", "/continue", "/unstuck", "/abort"} {
 		if strings.Contains(help, hidden) {
 			t.Fatalf("default help should hide %q: %s", hidden, help)
 		}
@@ -188,7 +188,7 @@ func TestSlashCommandHelpShowsAllInFullPower(t *testing.T) {
 	m.SetFullPowerCommands(true)
 	help := m.slashCommandHelp()
 
-	for _, want := range []string{"/rewind", "/reindex", "/debug-context"} {
+	for _, want := range []string{"/rewind", "/reindex", "/debug-context", "/last", "/continue", "/unstuck", "/abort"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("fullpower help missing %q: %s", want, help)
 		}

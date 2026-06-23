@@ -1425,11 +1425,7 @@ Available slash commands:
   /reindex         Reindex workspace (mtime-based diff; auto-forces on index version changes)
   /shrink          Compress older context into a summary (auto at 50%% or 20+ messages)
   /history [n]     Show input history or restore entry n into the input box
-  /last            Restore the previous input into the input box
   /clear           Clear context and start a new session
-  /continue        Continue a task paused at the iteration limit
-  /unstuck         Restart from a stalled/cancelled local-LLM attempt with a constrained next step
-  /abort           Stop a task paused at the iteration limit
   /debug-context   Load debug context JSON and attach it to chat and /task
   /vmax            Arm one-shot VMAX mode when started with --dangerous-vmax
   /help            Show this help
