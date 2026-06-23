@@ -380,6 +380,34 @@ func findBreakdownTask(tasks []breakdownTask, id string) (breakdownTask, bool) {
 	return breakdownTask{}, false
 }
 
+func isExecutableBreakdownStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "done", "skipped", "done-pending-user-test":
+		return false
+	default:
+		return true
+	}
+}
+
+func findNextBreakdownTask(tasks []breakdownTask) (breakdownTask, bool) {
+	for _, task := range tasks {
+		if isExecutableBreakdownStatus(task.Status) {
+			return task, true
+		}
+	}
+	return breakdownTask{}, false
+}
+
+func executableBreakdownTasks(tasks []breakdownTask) []breakdownTask {
+	var selected []breakdownTask
+	for _, task := range tasks {
+		if isExecutableBreakdownStatus(task.Status) {
+			selected = append(selected, task)
+		}
+	}
+	return selected
+}
+
 func buildDoTaskPrompt(path string, task breakdownTask, dependencyWarnings []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `Execute exactly one task from this Virgil task breakdown document.
@@ -417,6 +445,31 @@ Hard constraints:
 	}
 	b.WriteString("\nTask block:\n")
 	b.WriteString(task.Block)
+	return b.String()
+}
+
+func buildDoAllTasksPrompt(path string, tasks []breakdownTask) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `Execute all executable tasks from this Virgil task breakdown document.
+
+Task document: %s
+
+Hard constraints:
+- This command is only available in dangerous VMAX mode because it can perform broad multi-task edits.
+- Execute the listed tasks in document order.
+- Do not execute tasks whose status is done, skipped, or done-pending-user-test.
+- Do not invent new task IDs.
+- Before starting each task, inspect only the references and edit targets needed for that task.
+- Keep edits bounded to the current task before moving to the next task.
+- If a task is blocked, report it and continue only when later tasks are independent.
+- Do not update the task document automatically.
+- In the final report, summarize each task as done, done-pending-user-test, or blocked.
+
+Executable task count: %d
+`, path, len(tasks))
+	for _, task := range tasks {
+		fmt.Fprintf(&b, "\n---\n\nTask ID: %s\nTask title: %s\n\nTask block:\n%s\n", task.ID, task.Title, task.Block)
+	}
 	return b.String()
 }
 

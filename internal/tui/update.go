@@ -1114,6 +1114,55 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			return taskRequestMsg{description: prompt, display: display, flow: flow}
 		}
 
+	case "/do-next":
+		flow := false
+		if len(args) == 2 && args[1] == "--flow" {
+			flow = true
+		}
+		if len(args) != 1 && !flow {
+			return m, m.printSystem("Usage: /do-next <task_document.md> [--flow]")
+		}
+		pathArg := args[0]
+		path, tasks, err := loadTaskBreakdown(m.workspaceRoot, pathArg)
+		if err != nil {
+			return m, m.printSystem(fmt.Sprintf("❌ /do-next error: %v", err))
+		}
+		task, ok := findNextBreakdownTask(tasks)
+		if !ok {
+			return m, m.printSystemDisplayOnly(fmt.Sprintf("No executable tasks remain in %s.", path))
+		}
+		prompt := buildDoTaskPrompt(path, task, dependencyWarnings(task, tasks))
+		display := fmt.Sprintf("/do-next %s", pathArg)
+		if flow {
+			display += " --flow"
+			prompt += "\nFlow mode: Continue working until the task is genuinely complete. If you reach an iteration window limit, resume without repeating completed work.\n"
+		}
+		return m, func() tea.Msg {
+			return taskRequestMsg{description: prompt, display: display, flow: flow}
+		}
+
+	case "/do-all":
+		if !m.vmaxAvailable {
+			return m, m.printSystemDisplayOnly("❌ /do-all is disabled. Start Virgil with --dangerous-vmax to enable it.")
+		}
+		if len(args) != 1 {
+			return m, m.printSystem("Usage: /do-all <task_document.md>")
+		}
+		path, tasks, err := loadTaskBreakdown(m.workspaceRoot, args[0])
+		if err != nil {
+			return m, m.printSystem(fmt.Sprintf("❌ /do-all error: %v", err))
+		}
+		selected := executableBreakdownTasks(tasks)
+		if len(selected) == 0 {
+			return m, m.printSystemDisplayOnly(fmt.Sprintf("No executable tasks remain in %s.", path))
+		}
+		prompt := buildDoAllTasksPrompt(path, selected)
+		return m.startChatTurnWithOptions(fmt.Sprintf("/do-all %s", args[0]), prompt, agent.RunOptions{
+			MaxIterations:         agent.VMaxIterations,
+			AutoConfirmRunCommand: true,
+			PreflightShrink:       true,
+		})
+
 	case "/task-status":
 		if len(args) != 3 {
 			return m, m.printSystem("Usage: /task-status <task-id> <status> <task_document.md>")
@@ -1367,6 +1416,8 @@ Available slash commands:
   /task <task>     Execute a task with structured TODO list and result report
   /tasks <path>    List task IDs and status from a task breakdown document
   /do <id> <path> [--flow]  Execute one task; --flow auto-continues at iteration limits
+  /do-next <path> [--flow]  Execute the next executable task
+  /do-all <path>   Execute all executable tasks (requires --dangerous-vmax)
   /breakdown <source> [--output <path>]  Generate a task breakdown document
   /breakdown-last [--output <path>]  Generate tasks from the last assistant response
   /copy-last       Copy the last assistant response as raw Markdown
@@ -1409,6 +1460,8 @@ Available slash commands:
   /task <task>     Execute a task with structured TODO list and result report
   /tasks <path>    List task IDs and status from a task breakdown document
   /do <id> <path> [--flow]  Execute one task; --flow auto-continues at iteration limits
+  /do-next <path> [--flow]  Execute the next executable task
+  /do-all <path>   Execute all executable tasks (requires --dangerous-vmax)
   /task-status <id> <status> <path>  Update one task status line
   /breakdown <source> [--output <path>]  Generate a task breakdown document
   /breakdown-last [--output <path>]  Generate tasks from the last assistant response

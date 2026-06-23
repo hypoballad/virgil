@@ -188,6 +188,115 @@ func TestDoSlashCommandBuildsFlowTaskRequest(t *testing.T) {
 	}
 }
 
+func TestFindNextBreakdownTaskSkipsNonExecutableStatuses(t *testing.T) {
+	tasks := parseTaskBreakdown(`# Example
+
+## Task RPT-001: Done task
+
+Status: done
+
+## Task RPT-002: Waiting for user test
+
+Status: done-pending-user-test
+
+## Task RPT-003: Next task
+
+Status: todo
+`)
+	task, ok := findNextBreakdownTask(tasks)
+	if !ok {
+		t.Fatal("expected next task")
+	}
+	if task.ID != "RPT-003" {
+		t.Fatalf("next task = %s, want RPT-003", task.ID)
+	}
+}
+
+func TestDoNextSlashCommandBuildsTaskRequest(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "tasks.md")
+	if err := os.WriteFile(path, []byte(sampleTaskBreakdown), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := testModel()
+	m.workspaceRoot = root
+
+	_, cmd := m.handleSlashCommand("/do-next tasks.md")
+	if cmd == nil {
+		t.Fatal("expected /do-next command")
+	}
+	msg, ok := cmd().(taskRequestMsg)
+	if !ok {
+		t.Fatalf("expected taskRequestMsg, got %#v", cmd())
+	}
+	if msg.display != "/do-next tasks.md" {
+		t.Fatalf("display = %q", msg.display)
+	}
+	if !strings.Contains(msg.description, "Task ID: RPT-001") {
+		t.Fatalf("description missing selected task:\n%s", msg.description)
+	}
+}
+
+func TestDoNextSlashCommandBuildsFlowTaskRequest(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "tasks.md")
+	if err := os.WriteFile(path, []byte(sampleTaskBreakdown), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := testModel()
+	m.workspaceRoot = root
+
+	_, cmd := m.handleSlashCommand("/do-next tasks.md --flow")
+	if cmd == nil {
+		t.Fatal("expected /do-next --flow command")
+	}
+	msg, ok := cmd().(taskRequestMsg)
+	if !ok {
+		t.Fatalf("expected taskRequestMsg, got %#v", cmd())
+	}
+	if !msg.flow {
+		t.Fatal("flow flag should be set")
+	}
+	if msg.display != "/do-next tasks.md --flow" {
+		t.Fatalf("display = %q", msg.display)
+	}
+}
+
+func TestDoAllSlashCommandRequiresVMax(t *testing.T) {
+	m := testModel()
+	updated, cmd := m.handleSlashCommand("/do-all tasks.md")
+	if cmd == nil {
+		t.Fatal("expected disabled message command")
+	}
+	got := updated.(*Model)
+	if len(got.messages) == 0 {
+		t.Fatal("expected system message")
+	}
+	content := got.messages[len(got.messages)-1].Content
+	if !strings.Contains(content, "dangerous-vmax") {
+		t.Fatalf("message should mention dangerous-vmax: %q", content)
+	}
+}
+
+func TestBuildDoAllTasksPrompt(t *testing.T) {
+	tasks := executableBreakdownTasks(parseTaskBreakdown(sampleTaskBreakdown))
+	prompt := buildDoAllTasksPrompt("/tmp/tasks.md", tasks)
+	for _, want := range []string{
+		"Execute all executable tasks",
+		"Task document: /tmp/tasks.md",
+		"Executable task count: 1",
+		"Task ID: RPT-001",
+		"Do not execute tasks whose status is done, skipped, or done-pending-user-test",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "Task ID: RPT-002") {
+		t.Fatalf("prompt should skip done-pending-user-test task:\n%s", prompt)
+	}
+}
+
 func TestParseBreakdownCommand(t *testing.T) {
 	cmd, err := parseBreakdownCommand("/Breakdown docs/source.md --output docs/tasks.md")
 	if err != nil {
