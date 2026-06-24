@@ -47,6 +47,7 @@ const historySummarizationPrompt = `You are compressing older conversation histo
 Write a concise but useful summary that preserves:
 - completed work, especially file paths and behavior changes
 - important errors, blockers, and decisions
+- failed or blocked tool calls: preserve the tool name, key arguments, exact error/block reason, and the recovery instruction or next safe alternative
 - current progress and pending next steps
 - facts the agent must remember to continue safely
 
@@ -314,6 +315,9 @@ func formatMessagesForSummary(messages []llm.Message, maxChars int) string {
 			sb.WriteString(fmt.Sprintf("[tool calls: %d]\n", len(msg.ToolCalls)))
 			for _, tc := range msg.ToolCalls {
 				sb.WriteString(fmt.Sprintf("- %s\n", tc.Function.Name))
+				if args := compactSummaryToolArguments(tc.Function.Arguments); args != "" {
+					sb.WriteString(fmt.Sprintf("  args: %s\n", args))
+				}
 			}
 		}
 		sb.WriteString("\n")
@@ -328,6 +332,26 @@ func formatMessagesForSummary(messages []llm.Message, maxChars int) string {
 		return content
 	}
 	return "[Earlier content omitted because the history was too large. Summarize the retained tail accurately.]\n" + string(runes[len(runes)-maxChars:])
+}
+
+func compactSummaryToolArguments(args interface{}) string {
+	if args == nil {
+		return ""
+	}
+	data, err := json.Marshal(args)
+	if err != nil {
+		return ""
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" || text == "null" || text == "{}" {
+		return ""
+	}
+	const maxToolArgumentSummaryChars = 1000
+	runes := []rune(text)
+	if len(runes) <= maxToolArgumentSummaryChars {
+		return text
+	}
+	return string(runes[:maxToolArgumentSummaryChars]) + "... [truncated]"
 }
 
 type preflightShrinkResult struct {
@@ -444,9 +468,7 @@ func splitMessagesForPreflightShrink(messages []llm.Message, recentCount int) (b
 	}
 
 	split := len(messages) - recentCount
-	for split > bodyStart && messages[split].Role == "tool" {
-		split--
-	}
+	split = protectToolContextSplit(messages, bodyStart, split)
 	if split <= bodyStart {
 		return base, nil, messages[bodyStart:]
 	}
@@ -454,6 +476,68 @@ func splitMessagesForPreflightShrink(messages []llm.Message, recentCount int) (b
 	older = messages[bodyStart:split]
 	recent = messages[split:]
 	return base, older, recent
+}
+
+func protectToolContextSplit(messages []llm.Message, bodyStart int, split int) int {
+	for split > bodyStart && split < len(messages) && messages[split].Role == "tool" {
+		split--
+	}
+	return protectRecentToolFailure(messages, bodyStart, split)
+}
+
+func protectRecentToolFailure(messages []llm.Message, bodyStart int, split int) int {
+	if split <= bodyStart {
+		return split
+	}
+	for i := len(messages) - 1; i >= bodyStart; i-- {
+		msg := messages[i]
+		if msg.Role != "tool" || i >= split || !looksLikeToolFailure(msg.Content) {
+			continue
+		}
+		if assistantIdx := matchingAssistantToolCallIndex(messages, bodyStart, i, msg.ToolCallID); assistantIdx >= bodyStart {
+			return min(split, assistantIdx)
+		}
+		return min(split, i)
+	}
+	return split
+}
+
+func matchingAssistantToolCallIndex(messages []llm.Message, start int, toolIndex int, toolCallID string) int {
+	for i := toolIndex - 1; i >= start; i-- {
+		msg := messages[i]
+		if msg.Role != "assistant" || len(msg.ToolCalls) == 0 {
+			continue
+		}
+		if toolCallID == "" {
+			return i
+		}
+		for _, tc := range msg.ToolCalls {
+			if tc.ID == toolCallID {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func looksLikeToolFailure(content string) bool {
+	lower := strings.ToLower(content)
+	for _, marker := range []string{
+		"returned error",
+		"tool \"",
+		" blocked:",
+		"refusing ",
+		"failed",
+		"error:",
+		"path is required",
+		"must be unique",
+		"permission denied",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func pinUserMessagesForPreflightShrink(messages []llm.Message) (summarizable []llm.Message, pinned []llm.Message) {

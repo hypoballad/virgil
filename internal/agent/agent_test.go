@@ -509,6 +509,59 @@ func TestSplitMessagesForPreflightShrinkKeepsToolPair(t *testing.T) {
 	}
 }
 
+func TestSplitMessagesForPreflightShrinkKeepsRecentToolFailure(t *testing.T) {
+	messages := []llm.Message{
+		{Role: "system", Content: "system"},
+		{Role: "user", Content: "old-1"},
+		{Role: "assistant", Content: "old-2"},
+		{Role: "user", Content: "old-3"},
+		{Role: "assistant", Content: "old-4"},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{ID: "call-1", Function: llm.FunctionCall{Name: "read_file", Arguments: map[string]interface{}{"path": "plan.md"}}},
+			},
+		},
+		{Role: "tool", Content: "Refusing full Markdown read to protect context: plan.md", ToolCallID: "call-1"},
+		{Role: "user", Content: "continue"},
+		{Role: "assistant", Content: "continuing"},
+		{Role: "user", Content: "latest"},
+	}
+
+	_, older, recent := splitMessagesForPreflightShrink(messages, 3)
+	if len(older) == 0 {
+		t.Fatal("expected older messages")
+	}
+	if recent[0].Role != "assistant" || len(recent[0].ToolCalls) != 1 {
+		t.Fatalf("recent should start at failed assistant tool-call message, got %#v", recent[0])
+	}
+	if recent[1].Role != "tool" || !strings.Contains(recent[1].Content, "Refusing full Markdown read") {
+		t.Fatalf("recent should keep failed tool result, got %#v", recent)
+	}
+}
+
+func TestFormatMessagesForSummaryIncludesToolArguments(t *testing.T) {
+	input := formatMessagesForSummary([]llm.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{ID: "call-1", Function: llm.FunctionCall{Name: "read_file", Arguments: map[string]interface{}{"path": "plan.md"}}},
+			},
+		},
+		{Role: "tool", Content: "path is required", ToolCallID: "call-1"},
+	}, 0)
+
+	if !strings.Contains(input, "- read_file") {
+		t.Fatalf("summary input missing tool name:\n%s", input)
+	}
+	if !strings.Contains(input, `"path":"plan.md"`) {
+		t.Fatalf("summary input missing tool arguments:\n%s", input)
+	}
+	if !strings.Contains(input, "path is required") {
+		t.Fatalf("summary input missing tool failure:\n%s", input)
+	}
+}
+
 func TestLargeEditFilePayloadExecutesAndIsScrubbedFromHistory(t *testing.T) {
 	largeLines := make([]interface{}, 0, 10)
 	for i := 0; i < 10; i++ {

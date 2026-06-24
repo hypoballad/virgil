@@ -52,6 +52,41 @@ func TestSplitHistoryForShrinkKeepsSystemAndRecentMessages(t *testing.T) {
 	}
 }
 
+func TestSplitHistoryForShrinkKeepsRecentToolFailure(t *testing.T) {
+	history := []llm.Message{
+		{Role: "system", Content: "system prompt"},
+		{Role: "user", Content: "old user 1"},
+		{Role: "assistant", Content: "old assistant 1"},
+		{Role: "user", Content: "old user 2"},
+		{Role: "assistant", Content: "old assistant 2"},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{ID: "call-1", Function: llm.FunctionCall{Name: "read_file"}},
+			},
+		},
+		{Role: "tool", Content: "path is required", ToolCallID: "call-1"},
+		{Role: "user", Content: "recent user 1"},
+		{Role: "assistant", Content: "recent assistant 1"},
+		{Role: "user", Content: "recent user 2"},
+		{Role: "assistant", Content: "recent assistant 2"},
+		{Role: "user", Content: "recent user 3"},
+		{Role: "assistant", Content: "recent assistant 3"},
+		{Role: "user", Content: "latest"},
+	}
+
+	_, older, recent := splitHistoryForShrink(history)
+	if len(older) == 0 {
+		t.Fatal("expected older messages")
+	}
+	if recent[0].Role != "assistant" || len(recent[0].ToolCalls) != 1 {
+		t.Fatalf("recent should start at failed assistant tool-call message, got %#v", recent[0])
+	}
+	if recent[1].Role != "tool" || recent[1].Content != "path is required" {
+		t.Fatalf("recent should keep failed tool result, got %#v", recent)
+	}
+}
+
 func TestBuildCompressedHistory(t *testing.T) {
 	base := []llm.Message{{Role: "system", Content: "system prompt"}}
 	recent := []llm.Message{{Role: "user", Content: "latest"}}

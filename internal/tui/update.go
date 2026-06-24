@@ -1659,6 +1659,7 @@ func splitHistoryForShrink(history []llm.Message) (base []llm.Message, older []l
 	}
 
 	split := len(body) - shrinkRecentMessages
+	split = protectShrinkToolContextSplit(body, split)
 	older = body[:split]
 	recent = body[split:]
 	if len(older) > shrinkMaxMessagesToInput {
@@ -1666,6 +1667,64 @@ func splitHistoryForShrink(history []llm.Message) (base []llm.Message, older []l
 	}
 
 	return base, older, recent
+}
+
+func protectShrinkToolContextSplit(body []llm.Message, split int) int {
+	for split > 0 && split < len(body) && body[split].Role == "tool" {
+		split--
+	}
+	for i := len(body) - 1; i >= 0; i-- {
+		msg := body[i]
+		if msg.Role != "tool" || i >= split || !looksLikeShrinkToolFailure(msg.Content) {
+			continue
+		}
+		if assistantIdx := matchingShrinkAssistantToolCallIndex(body, i, msg.ToolCallID); assistantIdx >= 0 {
+			if assistantIdx < split {
+				return assistantIdx
+			}
+			return split
+		}
+		return i
+	}
+	return split
+}
+
+func matchingShrinkAssistantToolCallIndex(messages []llm.Message, toolIndex int, toolCallID string) int {
+	for i := toolIndex - 1; i >= 0; i-- {
+		msg := messages[i]
+		if msg.Role != "assistant" || len(msg.ToolCalls) == 0 {
+			continue
+		}
+		if toolCallID == "" {
+			return i
+		}
+		for _, tc := range msg.ToolCalls {
+			if tc.ID == toolCallID {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func looksLikeShrinkToolFailure(content string) bool {
+	lower := strings.ToLower(content)
+	for _, marker := range []string{
+		"returned error",
+		"tool \"",
+		" blocked:",
+		"refusing ",
+		"failed",
+		"error:",
+		"path is required",
+		"must be unique",
+		"permission denied",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func pinUserMessagesForShrink(messages []llm.Message) (summarizable []llm.Message, pinned []llm.Message) {
