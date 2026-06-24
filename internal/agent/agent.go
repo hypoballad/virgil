@@ -2042,7 +2042,18 @@ func (a *Agent) limitToolCallsPerIteration(toolCalls []llm.ToolCall) []llm.ToolC
 }
 
 func isHeavyReadToolCall(tc llm.ToolCall) bool {
-	return tc.Function.Name == "read_symbol"
+	if tc.Function.Name == "read_symbol" {
+		return true
+	}
+	if tc.Function.Name != "read_file" {
+		return false
+	}
+	startLine := intArg(tc.Function.Arguments, "start_line")
+	endLine := intArg(tc.Function.Arguments, "end_line")
+	if startLine <= 0 || endLine <= 0 {
+		return true
+	}
+	return endLine-startLine+1 > 80
 }
 
 func (a *Agent) isMutatingToolCall(tc llm.ToolCall) bool {

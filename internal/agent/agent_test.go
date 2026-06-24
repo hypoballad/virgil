@@ -1649,9 +1649,24 @@ func TestIsHeavyReadToolCall(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "read_file full read is not heavy in this scope",
+			name: "read_file without range is heavy",
 			call: testToolCall("read_file"),
+			want: true,
+		},
+		{
+			name: "read_file open ended range is heavy",
+			call: testToolCallWithArgs("read_file", map[string]interface{}{"path": "a.go", "start_line": 10}),
+			want: true,
+		},
+		{
+			name: "read_file narrow explicit range is not heavy",
+			call: testToolCallWithArgs("read_file", map[string]interface{}{"path": "a.go", "start_line": 10, "end_line": 40}),
 			want: false,
+		},
+		{
+			name: "read_file broad explicit range is heavy",
+			call: testToolCallWithArgs("read_file", map[string]interface{}{"path": "a.go", "start_line": 10, "end_line": 120}),
+			want: true,
 		},
 	}
 

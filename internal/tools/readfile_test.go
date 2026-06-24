@@ -72,7 +72,7 @@ func TestReadFileTool(t *testing.T) {
 		}
 	})
 
-	t.Run("cap open ended range", func(t *testing.T) {
+	t.Run("cap open ended range at smaller default", func(t *testing.T) {
 		var sb strings.Builder
 		for i := 1; i <= MaxReadRangeLines+50; i++ {
 			sb.WriteString(fmt.Sprintf("line %d\n", i))
@@ -90,7 +90,7 @@ func TestReadFileTool(t *testing.T) {
 		if result.IsError {
 			t.Fatalf("unexpected tool error: %s", result.Content)
 		}
-		if !strings.Contains(result.Content, fmt.Sprintf("lines 10-%d", 10+MaxReadRangeLines-1)) {
+		if !strings.Contains(result.Content, fmt.Sprintf("lines 10-%d", 10+OpenEndedReadRangeLines-1)) {
 			t.Fatalf("expected capped line range header, got:\n%s", result.Content)
 		}
 		if !strings.Contains(result.Content, "read_file range capped") {
@@ -98,6 +98,35 @@ func TestReadFileTool(t *testing.T) {
 		}
 		if result.Metadata["range_capped"] != true {
 			t.Fatalf("expected range_capped metadata, got %#v", result.Metadata)
+		}
+		if result.Metadata["range_limit"] != OpenEndedReadRangeLines {
+			t.Fatalf("expected open-ended range_limit %d, got %#v", OpenEndedReadRangeLines, result.Metadata)
+		}
+	})
+
+	t.Run("cap explicit range at max range limit", func(t *testing.T) {
+		var sb strings.Builder
+		for i := 1; i <= MaxReadRangeLines+50; i++ {
+			sb.WriteString(fmt.Sprintf("line %d\n", i))
+		}
+		path := filepath.Join(tmpDir, "explicit_range.txt")
+		os.WriteFile(path, []byte(sb.String()), 0644)
+
+		args := readFileArgs{Path: "explicit_range.txt", StartLine: 10, EndLine: 10 + MaxReadRangeLines + 10}
+		rawArgs, _ := json.Marshal(args)
+		result, err := tool.Execute(context.Background(), rawArgs)
+
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected tool error: %s", result.Content)
+		}
+		if !strings.Contains(result.Content, fmt.Sprintf("lines 10-%d", 10+MaxReadRangeLines-1)) {
+			t.Fatalf("expected explicit range to cap at MaxReadRangeLines, got:\n%s", result.Content)
+		}
+		if result.Metadata["range_limit"] != MaxReadRangeLines {
+			t.Fatalf("expected explicit range_limit %d, got %#v", MaxReadRangeLines, result.Metadata)
 		}
 	})
 

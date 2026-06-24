@@ -24,6 +24,9 @@ const (
 
 	// MaxReadRangeLines は1回の read_file range で返す最大行数
 	MaxReadRangeLines = 200
+
+	// OpenEndedReadRangeLines は end_line 省略時に返す最大行数
+	OpenEndedReadRangeLines = 80
 )
 
 type ReadFileTool struct {
@@ -303,9 +306,13 @@ func (t *ReadFileTool) readRange(path string, startLine, endLine int) (*Result, 
 		startLine = 1
 	}
 	requestedEndLine := endLine
+	rangeLimit := MaxReadRangeLines
+	if endLine == 0 {
+		rangeLimit = OpenEndedReadRangeLines
+	}
 	capped := false
-	if endLine == 0 || endLine-startLine+1 > MaxReadRangeLines {
-		endLine = startLine + MaxReadRangeLines - 1
+	if endLine == 0 || endLine-startLine+1 > rangeLimit {
+		endLine = startLine + rangeLimit - 1
 		capped = true
 	}
 
@@ -335,10 +342,10 @@ func (t *ReadFileTool) readRange(path string, startLine, endLine int) (*Result, 
 		return ErrorResult(fmt.Sprintf("scan error: %v", err)), nil
 	}
 
-	if capped && actualLines == MaxReadRangeLines {
+	if capped && actualLines == rangeLimit {
 		sb.WriteString(fmt.Sprintf(
-			"\n[read_file range capped at %d lines. Continue with start_line=%d and end_line=... if more context is needed.]\n",
-			MaxReadRangeLines,
+			"\n[read_file range capped at %d lines. Continue only if needed, and include both start_line=%d and an explicit end_line for the next narrow range.]\n",
+			rangeLimit,
 			endLine+1,
 		))
 	}
@@ -350,6 +357,7 @@ func (t *ReadFileTool) readRange(path string, startLine, endLine int) (*Result, 
 		"requested_end_line": requestedEndLine,
 		"actual_lines":       actualLines,
 		"range_capped":       capped,
+		"range_limit":        rangeLimit,
 		"mode":               "range",
 	}
 	return result, nil
