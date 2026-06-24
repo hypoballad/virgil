@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -177,17 +178,35 @@ func (c *OpenAIClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse
 		return nil, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+"/chat/completions", bytes.NewBuffer(jsonData))
+	newRequest := func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+"/chat/completions", bytes.NewBuffer(jsonData))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		if stream {
+			httpReq.Header.Set("Accept", "text/event-stream")
+			httpReq.Close = true
+		}
+		if c.APIKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+		}
+		return httpReq, nil
+	}
+
+	httpReq, err := newRequest()
 	if err != nil {
 		return nil, err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if c.APIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
-	}
-
-	client := &http.Client{}
+	client := openAIHTTPClient(stream)
 	resp, err := client.Do(httpReq)
+	if err != nil && stream && isOpenAIStreamEOF(err) {
+		httpReq, reqErr := newRequest()
+		if reqErr != nil {
+			return nil, reqErr
+		}
+		resp, err = client.Do(httpReq)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -246,6 +265,23 @@ func (c *OpenAIClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse
 	}
 
 	return res, nil
+}
+
+func openAIHTTPClient(stream bool) *http.Client {
+	if !stream {
+		return &http.Client{}
+	}
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	}
+	cloned := transport.Clone()
+	cloned.DisableKeepAlives = true
+	return &http.Client{Transport: cloned}
+}
+
+func isOpenAIStreamEOF(err error) bool {
+	return errors.Is(err, io.EOF) || strings.Contains(err.Error(), "EOF")
 }
 
 func formatOpenAIHTTPError(statusCode int, body []byte) error {

@@ -35,7 +35,7 @@ Relevant variables:
 | `OPENAI_MAX_TOKENS` | `cmd/virgil/main.go` | Optional; sent as `max_tokens` |
 | `OPENAI_PRESENCE_PENALTY` | `cmd/virgil/main.go` | Optional; sent as `presence_penalty` |
 | `OPENAI_FREQUENCY_PENALTY` | `cmd/virgil/main.go` | Optional; sent as `frequency_penalty` |
-| `OPENAI_STREAM` | `cmd/virgil/main.go` | Optional; set `false` to send non-streaming requests |
+| `OPENAI_STREAM` | `cmd/virgil/main.go` | Optional; defaults to streaming; set `false` as a local-server fallback |
 | `VIRGIL_WORKSPACE` | `cmd/virgil/main.go` | Workspace root; defaults to current directory |
 | `VIRGIL_DB_PATH` | `cmd/virgil/main.go` | Optional DB path override |
 | `DEBUG` | `cmd/virgil/main.go` | Any non-empty value enables debug logging |
@@ -74,7 +74,7 @@ OPENAI_MODEL=qwen
 OPENAI_TEMPERATURE=0.3
 OPENAI_TOP_P=0.9
 OPENAI_MAX_TOKENS=8192
-OPENAI_STREAM=false
+OPENAI_STREAM=true
 VIRGIL_WATCHDOG_CONTEXT_LIMIT=12000
 ```
 
@@ -172,7 +172,7 @@ Example error:
 llm chat failed: Post "http://127.0.0.1:11434/v1/chat/completions": EOF
 ```
 
-For local OpenAI-compatible servers such as llama.cpp, first disable streaming:
+Virgil avoids reusing streaming HTTP connections and retries one initial EOF on a fresh connection. If EOF still persists with a local OpenAI-compatible server such as llama.cpp, disable streaming as a fallback:
 
 ```bash
 OPENAI_STREAM=false

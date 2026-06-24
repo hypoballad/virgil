@@ -8,15 +8,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
 func TestOpenAIClient_ChatStream(t *testing.T) {
 	var gotBody string
+	var gotClose bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("path = %q, want /chat/completions", r.URL.Path)
 		}
+		gotClose = r.Close
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatalf("read request body: %v", err)
@@ -51,6 +54,9 @@ func TestOpenAIClient_ChatStream(t *testing.T) {
 	if !strings.Contains(gotBody, `"stream_options":{"include_usage":true}`) {
 		t.Fatalf("request body = %s, want stream_options include_usage true", gotBody)
 	}
+	if !gotClose {
+		t.Fatal("streaming request should ask the server to close the connection")
+	}
 	if resp.Message.Role != "assistant" {
 		t.Errorf("role = %q, want assistant", resp.Message.Role)
 	}
@@ -75,6 +81,45 @@ func TestOpenAIClient_ChatStream(t *testing.T) {
 	}
 	if resp.PromptTokens != 7 || resp.CompletionTokens != 11 {
 		t.Errorf("tokens = %d/%d, want 7/11", resp.PromptTokens, resp.CompletionTokens)
+	}
+}
+
+func TestOpenAIClient_ChatStreamRetriesInitialEOF(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("response writer does not support hijacking")
+			}
+			conn, _, err := hijacker.Hijack()
+			if err != nil {
+				t.Fatalf("hijack failed: %v", err)
+			}
+			_ = conn.Close()
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	client := &OpenAIClient{BaseURL: server.URL, Model: "test-model"}
+	resp, err := client.Chat(context.Background(), ChatRequest{
+		Stream:   true,
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat failed: %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("server calls = %d, want 2", got)
+	}
+	if resp.Message.Content != "ok" {
+		t.Fatalf("content = %q, want ok", resp.Message.Content)
 	}
 }
 
