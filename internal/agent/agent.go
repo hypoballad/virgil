@@ -1019,10 +1019,12 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 			}
 
 			if tools.ContainsOmittedToolArgument(tc.Function.Arguments) {
-				blockMsg := fmt.Sprintf("Tool %q blocked: %s", tc.Function.Name, tools.OmittedToolArgumentError())
+				blockMsg := omittedToolArgumentBlockMessage(tc.Function.Name, tc.Function.Arguments)
 				log.Printf("agent: %s", blockMsg)
-				structuralRecovery.Require("an omitted tool argument placeholder was rejected")
-				messages = scrubToolCallArguments(messages, tc.ID, "omitted tool argument payload was discarded; use a structural read before regenerating a small real edit")
+				if tc.Function.Name != "write_file" {
+					structuralRecovery.Require("an omitted tool argument placeholder was rejected")
+				}
+				messages = scrubToolCallArguments(messages, tc.ID, omittedToolArgumentScrubReason(tc.Function.Name))
 				record.Result = &tools.Result{
 					IsError: true,
 					Content: blockMsg,
@@ -1042,9 +1044,11 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
 					return a.escalate(ctx, messages, response, signal)
 				}
-				if signal := recordSemanticSafetyFailure(semanticSafetyFailures, "omitted_tool_argument", tc.Function.Name, blockMsg); signal != nil {
-					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
-					return a.escalate(ctx, messages, response, signal)
+				if tc.Function.Name != "write_file" {
+					if signal := recordSemanticSafetyFailure(semanticSafetyFailures, "omitted_tool_argument", tc.Function.Name, blockMsg); signal != nil {
+						log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
+						return a.escalate(ctx, messages, response, signal)
+					}
 				}
 				continue
 			}
@@ -1571,6 +1575,24 @@ func recordSemanticSafetyFailure(counts map[string]int, kind string, toolName st
 	}
 }
 
+func omittedToolArgumentBlockMessage(toolName string, args map[string]interface{}) string {
+	if toolName != "write_file" {
+		return fmt.Sprintf("Tool %q blocked: %s", toolName, tools.OmittedToolArgumentError())
+	}
+	path, _ := args["path"].(string)
+	if path == "" {
+		return fmt.Sprintf("Tool %q blocked: omitted-content placeholder is not executable file content. Regenerate the full content before calling write_file again.", toolName)
+	}
+	return fmt.Sprintf("Tool %q blocked: omitted-content placeholder is not executable file content for %s. Regenerate the full content before calling write_file again; if you need the current file state, read %s with read_file first.", toolName, path, path)
+}
+
+func omittedToolArgumentScrubReason(toolName string) string {
+	if toolName == "write_file" {
+		return "write_file content placeholder was rejected; regenerate the full file content or read the current path before writing again"
+	}
+	return "omitted tool argument payload was discarded; use a structural read before regenerating a small real edit"
+}
+
 func scrubToolCallArguments(messages []llm.Message, toolCallID string, reason string) []llm.Message {
 	if toolCallID == "" {
 		return messages
@@ -1685,9 +1707,50 @@ func scrubbedToolArguments(toolName string, args map[string]interface{}, reason 
 		out["find_text"] = "[discarded unsafe find_text payload; do not reuse]"
 		out["replace_with"] = "[discarded large or unsafe replacement payload; do not reuse; perform a structural read and create a semantic edit from current source]"
 	case "write_file":
-		out["content"] = "[discarded large or unsafe file content payload; do not reuse; perform a structural read before creating a new semantic edit]"
+		out["_instruction"] = "Do not reuse this historical write_file payload. The raw content was omitted from conversation history; read the target path if you need current file state, or regenerate the full content before writing again."
+		out["content"] = writeFileContentReference(args, reason)
 	}
 	return out
+}
+
+func writeFileContentReference(args map[string]interface{}, reason string) string {
+	content, _ := argumentValueText(args["content"])
+	sum := sha256.Sum256([]byte(content))
+	lines := 0
+	if content != "" {
+		lines = strings.Count(content, "\n") + 1
+	}
+	path, _ := args["path"].(string)
+	mode, _ := args["mode"].(string)
+	if mode == "" {
+		mode = "write"
+	}
+
+	var b strings.Builder
+	b.WriteString(tools.OmittedToolArgumentMarker)
+	b.WriteString("\nwrite_file content omitted from conversation history; this is a reference record, not executable file content.")
+	if path != "" {
+		b.WriteString("\nPath: ")
+		b.WriteString(path)
+	}
+	b.WriteString("\nMode: ")
+	b.WriteString(mode)
+	b.WriteString(fmt.Sprintf("\nOriginal chars: %d\nOriginal lines: %d\nOriginal estimated tokens: %d\nSHA256: %s",
+		len(content),
+		lines,
+		tokenizer.EstimateTokens(content),
+		hex.EncodeToString(sum[:]),
+	))
+	if reason != "" {
+		b.WriteString("\nReason: ")
+		b.WriteString(reason)
+	}
+	if path != "" {
+		b.WriteString("\nTo inspect current content after a successful write_file, call read_file with this path. To write again, regenerate the full content; do not copy this placeholder.")
+	} else {
+		b.WriteString("\nTo write again, regenerate the full content; do not copy this placeholder.")
+	}
+	return b.String()
 }
 
 func scrubbedToolArgumentMetadata(toolName string, args map[string]interface{}, reason string) []map[string]interface{} {
@@ -2386,6 +2449,11 @@ func compactArgumentsForToolCall(toolName string, args map[string]interface{}) (
 		if !ok {
 			continue
 		}
+		if toolName == "write_file" && field == "content" && argumentValueLength(value) > toolArgumentCompactionChars {
+			out[field] = writeFileContentReference(out, "large write_file content was omitted before LLM resend")
+			changed = true
+			continue
+		}
 		compacted, didCompact := compactArgumentValue(toolName, field, value)
 		if !didCompact {
 			continue
@@ -2450,6 +2518,11 @@ func compactArgumentValue(toolName, field string, value interface{}) (interface{
 }
 
 func compactArgumentString(toolName, field, value string) string {
+	if toolName == "write_file" && field == "content" {
+		return writeFileContentReference(map[string]interface{}{
+			"content": value,
+		}, "large write_file content was omitted before LLM resend")
+	}
 	return fmt.Sprintf(
 		tools.OmittedToolArgumentMarker+"\nThis is an internal context-compaction placeholder, not executable file content. Do not copy it into future tool calls or infer current file state from this placeholder. Use a structural read of the current target before creating a new %s argument.\nTool: %s\nField: %s\nOriginal chars: %d\nOriginal estimated tokens: %d",
 		field,

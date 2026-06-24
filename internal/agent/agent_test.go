@@ -1918,9 +1918,11 @@ func TestCompactToolCallArgumentsOmitsLargeWriteContent(t *testing.T) {
 	got := prepared[0].ToolCalls[0].Function.Arguments["content"].(string)
 	for _, want := range []string{
 		"[large tool argument omitted before LLM resend]",
-		"Tool: write_file",
-		"Field: content",
+		"write_file content omitted from conversation history",
+		"Path: report.md",
 		"Original chars:",
+		"SHA256:",
+		"read_file with this path",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("compacted argument missing %q:\n%s", want, got)
@@ -2052,6 +2054,59 @@ func TestLargeToolArgumentsAreScrubbedFromHistoryAfterExecution(t *testing.T) {
 			}
 			assertHistoryHasScrubbedWriteContent(t, mockLLM.requests[1].Messages, largeContent)
 		})
+	}
+}
+
+func TestOmittedWriteFileArgumentDoesNotRequireStructuralRead(t *testing.T) {
+	placeholder := tools.OmittedToolArgumentMarker + "\nwrite_file content omitted from conversation history"
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						testToolCallWithArgs("write_file", map[string]interface{}{
+							"path":    "report.md",
+							"content": placeholder,
+						}),
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "regenerated next"}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	writeTool := &dummyTool{name: "write_file", response: "should not run", isMutating: true}
+	readTool := &dummyTool{name: "read_file", response: "current", isMutating: false}
+	registry.Register(writeTool)
+	registry.Register(readTool)
+	agentInst := New(mockLLM, registry)
+
+	resp, err := agentInst.RunWithOptions(context.Background(), nil, "write report", RunOptions{MaxIterations: 3})
+	if err != nil {
+		t.Fatalf("RunWithOptions error = %v", err)
+	}
+	if writeTool.calls != 0 {
+		t.Fatalf("write_file should not execute omitted placeholder, calls=%d", writeTool.calls)
+	}
+	if readTool.calls != 0 {
+		t.Fatalf("write_file placeholder should not force structural read, read_file calls=%d", readTool.calls)
+	}
+	if resp.FinalContent != "regenerated next" {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+	if len(resp.ToolCalls) == 0 || resp.ToolCalls[0].Result == nil || !resp.ToolCalls[0].Result.IsError {
+		t.Fatalf("expected blocked write_file tool result, got %#v", resp.ToolCalls)
+	}
+	if !strings.Contains(resp.ToolCalls[0].Result.Content, "Regenerate the full content") {
+		t.Fatalf("unexpected block message: %s", resp.ToolCalls[0].Result.Content)
+	}
+	if len(mockLLM.requests) < 2 {
+		t.Fatalf("expected second request after blocked placeholder")
+	}
+	if got := joinMessageContent(mockLLM.requests[1].Messages); strings.Contains(got, "Recovery step required") {
+		t.Fatalf("write_file placeholder should not add structural recovery prompt:\n%s", got)
 	}
 }
 
@@ -2206,8 +2261,15 @@ func assertHistoryHasScrubbedWriteContent(t *testing.T, messages []llm.Message, 
 			if strings.Contains(content, rawContent) {
 				t.Fatalf("write_file history retained raw content")
 			}
-			if !strings.Contains(content, "discarded") {
-				t.Fatalf("write_file history content was not scrubbed: %q", content)
+			for _, want := range []string{
+				tools.OmittedToolArgumentMarker,
+				"write_file content omitted from conversation history",
+				"SHA256:",
+				"read_file with this path",
+			} {
+				if !strings.Contains(content, want) {
+					t.Fatalf("write_file history content missing %q: %q", want, content)
+				}
 			}
 			if _, ok := tc.Function.Arguments["_discarded_tool_arguments"]; !ok {
 				t.Fatalf("write_file history missing discard metadata: %#v", tc.Function.Arguments)
