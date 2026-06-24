@@ -39,9 +39,7 @@ const summaryInputMaxChars = 30000
 const preflightShrinkRecentMessages = 8
 
 const (
-	largeEditFileMaxRawNewLinesChars   = 6000
-	largeEditWithPatternMaxReplacement = 6000
-	maxSemanticSafetyFailuresPerRun    = 2
+	maxSemanticSafetyFailuresPerRun = 2
 )
 
 const historySummarizationPrompt = `You are compressing older conversation history for a coding agent.
@@ -1385,47 +1383,6 @@ func isVMaxRunOptions(opts RunOptions) bool {
 }
 
 func largeEditSafetyBlock(opts RunOptions, toolName string, argsJSON []byte) string {
-	label := "large-edit safety"
-	if isVMaxRunOptions(opts) {
-		label = "VMAX large-edit safety"
-	}
-	switch toolName {
-	case "edit_file":
-		var args struct {
-			Path     string          `json:"path"`
-			NewLines json.RawMessage `json:"new_lines"`
-		}
-		if err := json.Unmarshal(argsJSON, &args); err != nil {
-			return ""
-		}
-		rawLen := len(args.NewLines)
-		if rawLen > largeEditFileMaxRawNewLinesChars {
-			return fmt.Sprintf(
-				"Tool %q blocked by %s: new_lines is too large for one safe edit (raw %d chars; limit %d chars). Do not retry by chunking the same payload. Use a structural read of the current target, then choose the smallest semantic edit from the current source.",
-				toolName,
-				label,
-				rawLen,
-				largeEditFileMaxRawNewLinesChars,
-			)
-		}
-	case "edit_with_pattern":
-		var args struct {
-			ReplaceWith string `json:"replace_with"`
-		}
-		if err := json.Unmarshal(argsJSON, &args); err != nil {
-			return ""
-		}
-		if len(args.ReplaceWith) > largeEditWithPatternMaxReplacement {
-			return fmt.Sprintf(
-				"Tool %q blocked by %s: replace_with is too large for one safe edit (%d chars; limit %d chars). Do not retry by chunking the same payload. Use a structural read of the current target, then choose the smallest semantic edit from the current source.",
-				toolName,
-				label,
-				len(args.ReplaceWith),
-				largeEditWithPatternMaxReplacement,
-			)
-		}
-	}
-
 	return ""
 }
 
