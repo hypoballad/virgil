@@ -190,6 +190,16 @@ func main() {
 	if err := registry.Register(tools.NewRunTestsTool(workspaceRoot)); err != nil {
 		log.Fatalf("failed to register run_tests: %v", err)
 	}
+	for _, tool := range []tools.Tool{
+		tools.NewCheckPythonSyntaxTool(workspaceRoot),
+		tools.NewCheckGoPackageTool(workspaceRoot),
+		tools.NewCheckJavaScriptSyntaxTool(workspaceRoot),
+		tools.NewCheckTypeScriptTool(workspaceRoot),
+	} {
+		if err := registry.Register(tool); err != nil {
+			log.Fatalf("failed to register %s: %v", tool.Name(), err)
+		}
+	}
 
 	// Register get_file_outline tool
 	if err := registry.Register(tools.NewGetFileOutlineTool(workspaceRoot)); err != nil {

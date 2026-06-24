@@ -55,6 +55,7 @@ type dummyTool struct {
 	calls      int
 	isError    bool
 	lastArgs   json.RawMessage
+	metadata   map[string]interface{}
 }
 
 func (d *dummyTool) Name() string { return d.name }
@@ -75,9 +76,13 @@ func (d *dummyTool) Execute(ctx context.Context, args json.RawMessage) (*tools.R
 	d.calls++
 	d.lastArgs = append(d.lastArgs[:0], args...)
 	if d.isError {
-		return tools.ErrorResult(d.response), nil
+		res := tools.ErrorResult(d.response)
+		res.Metadata = d.metadata
+		return res, nil
 	}
-	return tools.SuccessResult(d.response), nil
+	res := tools.SuccessResult(d.response)
+	res.Metadata = d.metadata
+	return res, nil
 }
 func (d *dummyTool) IsMutating() bool {
 	return d.isMutating
@@ -999,6 +1004,67 @@ func TestRepeatedOmittedPlaceholderSafetyFailuresEscalate(t *testing.T) {
 	}
 }
 
+func TestCheckerUnavailableHiddenForRestOfRun(t *testing.T) {
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_checker",
+							Function: llm.FunctionCall{
+								Name: "check_typescript",
+								Arguments: map[string]interface{}{
+									"path": ".",
+								},
+							},
+						},
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "reported unavailable checker"}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	checker := &dummyTool{
+		name:     "check_typescript",
+		response: "typescript checker not found",
+		isError:  true,
+		metadata: map[string]interface{}{
+			"checker_unavailable": true,
+		},
+	}
+	registry.Register(checker)
+	registry.Register(&dummyTool{name: "run_tests", response: "ok"})
+	agentInst := New(mockLLM, registry)
+
+	resp, err := agentInst.RunWithOptions(context.Background(), nil, "check ts", RunOptions{MaxIterations: 3})
+	if err != nil {
+		t.Fatalf("RunWithOptions error = %v", err)
+	}
+	if resp.FinalContent != "reported unavailable checker" {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+	if len(mockLLM.requests) < 2 {
+		t.Fatalf("expected second request after checker failure")
+	}
+	secondTools := map[string]bool{}
+	for _, def := range mockLLM.requests[1].Tools {
+		secondTools[def.Function.Name] = true
+	}
+	if secondTools["check_typescript"] {
+		t.Fatalf("unavailable checker should be hidden in second request: %#v", secondTools)
+	}
+	if !secondTools["run_tests"] {
+		t.Fatalf("run_tests should remain available after checker unavailable: %#v", secondTools)
+	}
+	if len(resp.ToolCalls) == 0 || !strings.Contains(resp.ToolCalls[0].Result.Content, "hidden for the rest of this run") {
+		t.Fatalf("checker result did not explain hiding: %#v", resp.ToolCalls)
+	}
+}
+
 func TestRunTaskUsesTemplatePromptAndHistory(t *testing.T) {
 	mockLLM := &mockLLM{
 		responses: []llm.ChatResponse{
@@ -1235,6 +1301,10 @@ func TestToolDefinitionsSmallProfileFiltersAdvancedTools(t *testing.T) {
 		"edit_file",
 		"write_file",
 		"run_tests",
+		"check_python_syntax",
+		"check_go_package",
+		"check_javascript_syntax",
+		"check_typescript",
 		"get_call_graph",
 		"find_dependents",
 		"get_diff_summary",
@@ -1254,7 +1324,7 @@ func TestToolDefinitionsSmallProfileFiltersAdvancedTools(t *testing.T) {
 	for _, def := range defs {
 		got[def.Function.Name] = true
 	}
-	for _, want := range []string{"find_symbol", "get_file_outline", "get_symbol_outline", "read_symbol", "get_json_outline", "read_json_path", "get_markdown_outline", "read_markdown_section", "read_file", "search_text", "list_files", "edit_with_pattern", "edit_file", "write_file", "run_tests"} {
+	for _, want := range []string{"find_symbol", "get_file_outline", "get_symbol_outline", "read_symbol", "get_json_outline", "read_json_path", "get_markdown_outline", "read_markdown_section", "read_file", "search_text", "list_files", "edit_with_pattern", "edit_file", "write_file", "run_tests", "check_python_syntax", "check_go_package", "check_javascript_syntax", "check_typescript"} {
 		if !got[want] {
 			t.Fatalf("small profile missing %s; got %#v", want, got)
 		}

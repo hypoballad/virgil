@@ -103,6 +103,13 @@ func (r *Registry) RegisterRunTests(workspaceRoot string) {
 	r.Register(NewRunTestsTool(workspaceRoot))
 }
 
+func (r *Registry) RegisterCheckSyntaxTools(workspaceRoot string) {
+	r.Register(NewCheckPythonSyntaxTool(workspaceRoot))
+	r.Register(NewCheckGoPackageTool(workspaceRoot))
+	r.Register(NewCheckJavaScriptSyntaxTool(workspaceRoot))
+	r.Register(NewCheckTypeScriptTool(workspaceRoot))
+}
+
 // RegisterGetCallers は get_callers ツールを登録する
 func (r *Registry) RegisterGetCallers(calls *repository.CallRepository) {
 	r.Register(NewGetCallersTool(calls))

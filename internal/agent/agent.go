@@ -106,21 +106,25 @@ type toolResultCompactionPolicy struct {
 }
 
 var smallToolAllowlist = map[string]bool{
-	"find_symbol":           true,
-	"get_file_outline":      true,
-	"get_symbol_outline":    true,
-	"read_symbol":           true,
-	"get_json_outline":      true,
-	"read_json_path":        true,
-	"get_markdown_outline":  true,
-	"read_markdown_section": true,
-	"read_file":             true,
-	"search_text":           true,
-	"list_files":            true,
-	"edit_with_pattern":     true,
-	"edit_file":             true,
-	"write_file":            true,
-	"run_tests":             true,
+	"find_symbol":             true,
+	"get_file_outline":        true,
+	"get_symbol_outline":      true,
+	"read_symbol":             true,
+	"get_json_outline":        true,
+	"read_json_path":          true,
+	"get_markdown_outline":    true,
+	"read_markdown_section":   true,
+	"read_file":               true,
+	"search_text":             true,
+	"list_files":              true,
+	"edit_with_pattern":       true,
+	"edit_file":               true,
+	"write_file":              true,
+	"run_tests":               true,
+	"check_python_syntax":     true,
+	"check_go_package":        true,
+	"check_javascript_syntax": true,
+	"check_typescript":        true,
 }
 
 // LLMClient はAgentが必要とするLLMクライアントのinterface
@@ -781,6 +785,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 	lastPreflightShrinkIteration := -1000000
 	semanticSafetyFailures := map[string]int{}
 	structuralRecovery := structuralReadRecovery{}
+	unavailableTools := map[string]bool{}
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
 		log.Printf("agent: iteration %d/%d, %d messages", iteration+1, maxIterations, len(messages))
@@ -793,6 +798,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 
 		// ツール定義を取得
 		toolDefs := a.toolDefinitions()
+		toolDefs = filterUnavailableToolDefinitions(toolDefs, unavailableTools)
 		if structuralRecovery.Required {
 			toolDefs = structuralRecoveryToolDefinitions(toolDefs)
 		}
@@ -817,6 +823,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				response.Messages = messages
 				lastPreflightShrinkIteration = iteration
 				requestMessages = prepareMessagesForLLMRequest(messages)
+				toolDefs = filterUnavailableToolDefinitions(toolDefs, unavailableTools)
 				if structuralRecovery.Required {
 					requestMessages = append(cloneMessageSlice(requestMessages), llm.Message{
 						Role:    "user",
@@ -1223,6 +1230,12 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 			} else if result.IsError {
 				resultContent = result.Content
 				log.Printf("agent: tool %q returned error: %s", tc.Function.Name, result.Content)
+				if isCheckerUnavailableResult(result) {
+					unavailableTools[tc.Function.Name] = true
+					resultContent += "\n\nThis checker is unavailable in the current environment and will be hidden for the rest of this run. Continue with other available checks or explain the environment blocker if verification was required."
+					result.Content = resultContent
+					log.Printf("agent: checker tool %q marked unavailable for this run", tc.Function.Name)
+				}
 				a.emitProgress(ProgressEvent{
 					Type:            EventAgentActivity,
 					ActivityMessage: fmt.Sprintf("Warning: ⚠️ %s returned error", tc.Function.Name),
@@ -1501,6 +1514,28 @@ func isStructuralRecoveryToolName(name string) bool {
 	}
 }
 
+func filterUnavailableToolDefinitions(defs []llm.ToolDefinition, unavailable map[string]bool) []llm.ToolDefinition {
+	if len(unavailable) == 0 {
+		return defs
+	}
+	filtered := make([]llm.ToolDefinition, 0, len(defs))
+	for _, def := range defs {
+		if unavailable[def.Function.Name] {
+			continue
+		}
+		filtered = append(filtered, def)
+	}
+	return filtered
+}
+
+func isCheckerUnavailableResult(result *tools.Result) bool {
+	if result == nil || result.Metadata == nil {
+		return false
+	}
+	value, _ := result.Metadata["checker_unavailable"].(bool)
+	return value
+}
+
 func semanticSafetyFailureKind(resultContent string) string {
 	switch {
 	case strings.Contains(resultContent, tools.OmittedToolArgumentError()) ||
@@ -1716,22 +1751,26 @@ func (a *Agent) toolDefinitions() []llm.ToolDefinition {
 	// find_symbol, get_file_outline を先頭に、search_text を最後に配置する
 	sort.Slice(defs, func(i, j int) bool {
 		priority := map[string]int{
-			"find_symbol":           100,
-			"find_dependents":       95,
-			"get_file_outline":      90,
-			"get_symbol_outline":    89,
-			"get_json_outline":      88,
-			"read_json_path":        87,
-			"get_markdown_outline":  86,
-			"read_markdown_section": 84,
-			"get_file_imports":      85,
-			"get_diff_summary":      82,
-			"read_file":             80,
-			"write_file":            70,
-			"edit_file":             60,
-			"list_files":            50,
-			"run_command":           40,
-			"search_text":           0, // 最低優先度（フォールバック）
+			"find_symbol":             100,
+			"find_dependents":         95,
+			"get_file_outline":        90,
+			"get_symbol_outline":      89,
+			"get_json_outline":        88,
+			"read_json_path":          87,
+			"get_markdown_outline":    86,
+			"read_markdown_section":   84,
+			"get_file_imports":        85,
+			"get_diff_summary":        82,
+			"read_file":               80,
+			"check_python_syntax":     76,
+			"check_go_package":        76,
+			"check_javascript_syntax": 76,
+			"check_typescript":        76,
+			"write_file":              70,
+			"edit_file":               60,
+			"list_files":              50,
+			"run_command":             40,
+			"search_text":             0, // 最低優先度（フォールバック）
 		}
 		pI := priority[defs[i].Function.Name]
 		pJ := priority[defs[j].Function.Name]
@@ -1772,28 +1811,32 @@ func (a *Agent) toolDefinitions() []llm.ToolDefinition {
 
 func compactToolDescription(name, fallback string) string {
 	descriptions := map[string]string{
-		"find_symbol":           "Find indexed code symbols by name. Use before search_text when looking for functions, methods, classes, types, consts, or vars.",
-		"get_file_outline":      "Return a code file outline with symbols, signatures, line numbers, and docs. Use before reading large code files.",
-		"get_symbol_outline":    "Return child symbols for one large class/type/function without reading its body.",
-		"read_symbol":           "Read one symbol by AST boundary. Large symbols default to summary; full mode is only for small symbols.",
-		"get_markdown_outline":  "Inspect .md headings with line ranges and estimated tokens. Use before read_file for Markdown.",
-		"read_markdown_section": "Read one Markdown section by heading or line range. Use instead of read_file for .md sections.",
-		"get_json_outline":      "Return JSON structure and size without loading the whole file.",
-		"read_json_path":        "Read a focused JSON value using JSONPath.",
-		"get_file_imports":      "Return indexed imports for one Python file.",
-		"find_dependents":       "Find Python files importing a module using the import index.",
-		"get_callers":           "Find indexed callers of a Go or Python function/method.",
-		"get_call_graph":        "Return a Mermaid call graph for a Go or Python function/method.",
-		"get_diff_summary":      "Summarize recent shadow-git edits without reading full files.",
-		"read_file":             "Read a file with line numbers and short line hashes. Do not use without a range for .md files; use Markdown tools or ranges.",
-		"search_text":           "Fallback full-text regex search for strings, comments, configs, or non-indexed files.",
-		"list_files":            "List files/directories, optionally recursively.",
-		"write_file":            "Create, append, or overwrite a file. Prefer edit tools for existing files.",
-		"edit_file":             "Replace a specific 1-indexed line range in a file; pass expected line hashes from read_file when available.",
-		"edit_with_pattern":     "Replace one unique text pattern in a file. Preferred for precise edits.",
-		"run_tests":             "Run project tests for Go, Python, JS/TS, or Rust.",
-		"run_command":           "Run a workspace shell command; unsafe commands may require confirmation.",
-		"fetch_docs":            "Fetch a web page and return extracted Markdown.",
+		"find_symbol":             "Find indexed code symbols by name. Use before search_text when looking for functions, methods, classes, types, consts, or vars.",
+		"get_file_outline":        "Return a code file outline with symbols, signatures, line numbers, and docs. Use before reading large code files.",
+		"get_symbol_outline":      "Return child symbols for one large class/type/function without reading its body.",
+		"read_symbol":             "Read one symbol by AST boundary. Large symbols default to summary; full mode is only for small symbols.",
+		"get_markdown_outline":    "Inspect .md headings with line ranges and estimated tokens. Use before read_file for Markdown.",
+		"read_markdown_section":   "Read one Markdown section by heading or line range. Use instead of read_file for .md sections.",
+		"get_json_outline":        "Return JSON structure and size without loading the whole file.",
+		"read_json_path":          "Read a focused JSON value using JSONPath.",
+		"get_file_imports":        "Return indexed imports for one Python file.",
+		"find_dependents":         "Find Python files importing a module using the import index.",
+		"get_callers":             "Find indexed callers of a Go or Python function/method.",
+		"get_call_graph":          "Return a Mermaid call graph for a Go or Python function/method.",
+		"get_diff_summary":        "Summarize recent shadow-git edits without reading full files.",
+		"read_file":               "Read a file with line numbers and short line hashes. Do not use without a range for .md files; use Markdown tools or ranges.",
+		"search_text":             "Fallback full-text regex search for strings, comments, configs, or non-indexed files.",
+		"list_files":              "List files/directories, optionally recursively.",
+		"write_file":              "Create, append, or overwrite a file. Prefer edit tools for existing files.",
+		"edit_file":               "Replace a specific 1-indexed line range in a file; pass expected line hashes from read_file when available.",
+		"edit_with_pattern":       "Replace one unique text pattern in a file. Preferred for precise edits.",
+		"check_python_syntax":     "Check Python syntax for one .py file using py_compile. Use after Python edits before run_tests.",
+		"check_go_package":        "Check a Go package quickly with go test -run '^$'. Use after Go edits before run_tests.",
+		"check_javascript_syntax": "Check JavaScript syntax for one file using node --check. Use after JS edits before run_tests.",
+		"check_typescript":        "Check TypeScript with tsc --noEmit --pretty false. Use after TS/TSX edits before run_tests.",
+		"run_tests":               "Run project tests for Go, Python, JS/TS, or Rust.",
+		"run_command":             "Run a workspace shell command; unsafe commands may require confirmation.",
+		"fetch_docs":              "Fetch a web page and return extracted Markdown.",
 	}
 	if description, ok := descriptions[name]; ok {
 		return description
