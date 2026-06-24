@@ -25,7 +25,7 @@ import (
 )
 
 const MaxIterations = 20
-const VMaxIterations = 60
+const VMaxIterations = 100
 
 const DefaultMetadataRequestTimeout = 120 * time.Second
 

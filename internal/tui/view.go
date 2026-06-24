@@ -65,7 +65,7 @@ func (m Model) View() string {
 
 	var vmaxStr string
 	if m.vmaxActive {
-		vmaxStr = "⚡ VMAX active 60 auto-run"
+		vmaxStr = fmt.Sprintf("⚡ VMAX active %d auto-run", agent.VMaxIterations)
 	} else if m.vmaxArmed {
 		vmaxStr = "⚡ VMAX ready"
 	}

@@ -1061,7 +1061,7 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		}
 		m.vmaxArmed = true
 		m.vmaxActive = false
-		return m, m.printSystemDisplayOnly("VMAX ready! The next chat or /task will use 60 iterations and auto-accept run_command confirmations.")
+		return m, m.printSystemDisplayOnly(fmt.Sprintf("VMAX ready! The next chat or /task will use %d iterations and auto-accept run_command confirmations.", agent.VMaxIterations))
 
 	case "/task":
 		description := strings.TrimSpace(strings.TrimPrefix(input, "/task"))
