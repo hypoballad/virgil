@@ -1928,12 +1928,16 @@ func (m *Model) consumeVMaxRunOptions() agent.RunOptions {
 }
 
 func (m *Model) vmaxAutoOffCommand() tea.Cmd {
-	if !m.vmaxActive {
+	if !m.vmaxActive && !m.vmaxArmed {
 		return nil
 	}
+	wasActive := m.vmaxActive
 	m.vmaxActive = false
 	m.vmaxArmed = false
 	m.currentRunMaxIterations = agent.MaxIterations
+	if !wasActive {
+		return nil
+	}
 	return m.printSystemDisplayOnly("VMAX auto off.")
 }
 

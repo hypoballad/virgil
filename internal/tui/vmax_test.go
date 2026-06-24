@@ -48,3 +48,33 @@ func TestVMaxUnavailableDoesNotArmOptions(t *testing.T) {
 		t.Fatalf("unavailable vmax should not return options, got %#v", opts)
 	}
 }
+
+func TestVMaxAutoOffClearsStaleArmedState(t *testing.T) {
+	m := Model{vmaxArmed: true, currentRunMaxIterations: agent.VMaxIterations}
+
+	cmd := m.vmaxAutoOffCommand()
+	if cmd != nil {
+		t.Fatal("stale armed state should be cleared silently")
+	}
+	if m.vmaxArmed || m.vmaxActive {
+		t.Fatalf("vmax state should be cleared, armed=%v active=%v", m.vmaxArmed, m.vmaxActive)
+	}
+	if m.currentRunMaxIterations != agent.MaxIterations {
+		t.Fatalf("currentRunMaxIterations = %d, want %d", m.currentRunMaxIterations, agent.MaxIterations)
+	}
+}
+
+func TestVMaxAutoOffClearsActiveState(t *testing.T) {
+	m := Model{vmaxActive: true, currentRunMaxIterations: agent.VMaxIterations}
+
+	cmd := m.vmaxAutoOffCommand()
+	if cmd == nil {
+		t.Fatal("active state should return an auto-off message command")
+	}
+	if m.vmaxArmed || m.vmaxActive {
+		t.Fatalf("vmax state should be cleared, armed=%v active=%v", m.vmaxArmed, m.vmaxActive)
+	}
+	if m.currentRunMaxIterations != agent.MaxIterations {
+		t.Fatalf("currentRunMaxIterations = %d, want %d", m.currentRunMaxIterations, agent.MaxIterations)
+	}
+}
