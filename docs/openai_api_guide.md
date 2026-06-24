@@ -35,6 +35,7 @@ Relevant variables:
 | `OPENAI_MAX_TOKENS` | `cmd/virgil/main.go` | Optional; sent as `max_tokens` |
 | `OPENAI_PRESENCE_PENALTY` | `cmd/virgil/main.go` | Optional; sent as `presence_penalty` |
 | `OPENAI_FREQUENCY_PENALTY` | `cmd/virgil/main.go` | Optional; sent as `frequency_penalty` |
+| `OPENAI_STREAM` | `cmd/virgil/main.go` | Optional; set `false` to send non-streaming requests |
 | `VIRGIL_WORKSPACE` | `cmd/virgil/main.go` | Workspace root; defaults to current directory |
 | `VIRGIL_DB_PATH` | `cmd/virgil/main.go` | Optional DB path override |
 | `DEBUG` | `cmd/virgil/main.go` | Any non-empty value enables debug logging |
@@ -73,6 +74,7 @@ OPENAI_MODEL=qwen
 OPENAI_TEMPERATURE=0.3
 OPENAI_TOP_P=0.9
 OPENAI_MAX_TOKENS=8192
+OPENAI_STREAM=false
 VIRGIL_WATCHDOG_CONTEXT_LIMIT=12000
 ```
 
@@ -161,6 +163,22 @@ Check:
 - The key has not been revoked.
 - The key belongs to the expected OpenAI project/organization.
 - There is no leading whitespace before `OPENAI_API_KEY`.
+
+### Local OpenAI-Compatible EOF
+
+Example error:
+
+```text
+llm chat failed: Post "http://127.0.0.1:11434/v1/chat/completions": EOF
+```
+
+For local OpenAI-compatible servers such as llama.cpp, first disable streaming:
+
+```bash
+OPENAI_STREAM=false
+```
+
+If EOF persists, reduce `OPENAI_MAX_TOKENS` and ensure `VIRGIL_WATCHDOG_CONTEXT_LIMIT` is below the server's effective context size.
 
 ### Access Forbidden
 

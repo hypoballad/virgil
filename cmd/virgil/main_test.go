@@ -50,6 +50,7 @@ func TestLoadOpenAIParametersFromEnv(t *testing.T) {
 	t.Setenv("OPENAI_MAX_TOKENS", "2048")
 	t.Setenv("OPENAI_PRESENCE_PENALTY", "0.1")
 	t.Setenv("OPENAI_FREQUENCY_PENALTY", "0.3")
+	t.Setenv("OPENAI_STREAM", "false")
 
 	params, err := loadOpenAIParametersFromEnv()
 	if err != nil {
@@ -70,6 +71,9 @@ func TestLoadOpenAIParametersFromEnv(t *testing.T) {
 	if params.FrequencyPenalty == nil || *params.FrequencyPenalty != 0.3 {
 		t.Fatalf("FrequencyPenalty = %v, want 0.3", params.FrequencyPenalty)
 	}
+	if !params.DisableStream {
+		t.Fatal("DisableStream = false, want true")
+	}
 }
 
 func TestLoadOpenAIParametersFromEnvInvalid(t *testing.T) {
@@ -81,5 +85,17 @@ func TestLoadOpenAIParametersFromEnvInvalid(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "OPENAI_TEMPERATURE") {
 		t.Fatalf("error = %v, want OPENAI_TEMPERATURE context", err)
+	}
+}
+
+func TestLoadOpenAIParametersFromEnvInvalidStream(t *testing.T) {
+	t.Setenv("OPENAI_STREAM", "maybe")
+
+	_, err := loadOpenAIParametersFromEnv()
+	if err == nil {
+		t.Fatal("loadOpenAIParametersFromEnv() succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "OPENAI_STREAM") {
+		t.Fatalf("error = %v, want OPENAI_STREAM context", err)
 	}
 }

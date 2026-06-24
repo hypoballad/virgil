@@ -133,6 +133,7 @@ func main() {
 			MaxTokens:        openAIParams.MaxTokens,
 			PresencePenalty:  openAIParams.PresencePenalty,
 			FrequencyPenalty: openAIParams.FrequencyPenalty,
+			DisableStream:    openAIParams.DisableStream,
 		}
 	} else {
 		fmt.Printf("Fatal: unknown LLM_PROVIDER: %s\n", provider)
@@ -365,6 +366,7 @@ type openAIParameters struct {
 	MaxTokens        *int
 	PresencePenalty  *float64
 	FrequencyPenalty *float64
+	DisableStream    bool
 }
 
 func loadOpenAIParametersFromEnv() (openAIParameters, error) {
@@ -386,8 +388,26 @@ func loadOpenAIParametersFromEnv() (openAIParameters, error) {
 	if params.FrequencyPenalty, err = optionalFloatEnv("OPENAI_FREQUENCY_PENALTY"); err != nil {
 		return openAIParameters{}, err
 	}
+	if params.DisableStream, err = optionalDisableStreamEnv("OPENAI_STREAM"); err != nil {
+		return openAIParameters{}, err
+	}
 
 	return params, nil
+}
+
+func optionalDisableStreamEnv(name string) (bool, error) {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	if raw == "" {
+		return false, nil
+	}
+	switch raw {
+	case "false", "0", "no", "off":
+		return true, nil
+	case "true", "1", "yes", "on":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s must be true or false", name)
+	}
 }
 
 func optionalFloatEnv(name string) (*float64, error) {

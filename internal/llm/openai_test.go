@@ -127,6 +127,39 @@ func TestOpenAIClient_ChatIncludesConfiguredGenerationParameters(t *testing.T) {
 	}
 }
 
+func TestOpenAIClient_DisableStreamOverridesRequestStream(t *testing.T) {
+	var got map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	client := &OpenAIClient{BaseURL: server.URL, Model: "test-model", DisableStream: true}
+	resp, err := client.Chat(context.Background(), ChatRequest{
+		Stream:   true,
+		Messages: []Message{{Role: "user", Content: "hi"}},
+		StreamFunc: func(partial string) {
+			t.Fatalf("StreamFunc should not be called, got %q", partial)
+		},
+	})
+	if err != nil {
+		t.Fatalf("Chat failed: %v", err)
+	}
+	if got["stream"] != false {
+		t.Fatalf("stream = %v, want false", got["stream"])
+	}
+	if _, ok := got["stream_options"]; ok {
+		t.Fatalf("stream_options should be omitted when streaming is disabled: %#v", got)
+	}
+	if resp.Message.Content != "ok" {
+		t.Fatalf("content = %q, want ok", resp.Message.Content)
+	}
+}
+
 func TestOpenAIRequest_StreamOptions_IncludedWhenStreaming(t *testing.T) {
 	req := openaiChatRequest{
 		Model:         "gpt-5-mini",

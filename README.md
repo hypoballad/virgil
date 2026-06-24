@@ -58,6 +58,7 @@ OPENAI_API_KEY=
 OPENAI_MODEL=qwen
 OPENAI_TEMPERATURE=0.3
 OPENAI_TOP_P=0.9
+OPENAI_STREAM=false
 ```
 
 OpenAI API:
@@ -77,6 +78,7 @@ Useful optional settings:
 - `VIRGIL_AGENT_TIMEOUT_MINUTES`: timeout for normal requests
 - `VIRGIL_RUN_TIMEOUT_MINUTES`: timeout for generated task execution
 - `OPENAI_TEMPERATURE`, `OPENAI_TOP_P`, `OPENAI_MAX_TOKENS`: optional OpenAI-compatible generation parameters
+- `OPENAI_STREAM=false`: disable streaming for OpenAI-compatible servers that close streaming connections early
 - `VIRGIL_RUN_AUTO_ALLOW`: comma-separated command prefixes to auto-allow
 - `VIRGIL_RUN_DENY`: comma-separated command patterns to deny
 

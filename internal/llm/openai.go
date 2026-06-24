@@ -20,6 +20,7 @@ type OpenAIClient struct {
 	MaxTokens        *int
 	PresencePenalty  *float64
 	FrequencyPenalty *float64
+	DisableStream    bool
 }
 
 type openaiMessage struct {
@@ -113,10 +114,11 @@ func (c *OpenAIClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse
 	if req.Model == "" {
 		req.Model = c.Model
 	}
+	stream := req.Stream && !c.DisableStream
 
 	openaiReq := openaiChatRequest{
 		Model:            req.Model,
-		Stream:           req.Stream,
+		Stream:           stream,
 		Messages:         make([]openaiMessage, len(req.Messages)),
 		Temperature:      c.Temperature,
 		TopP:             c.TopP,
@@ -124,7 +126,7 @@ func (c *OpenAIClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse
 		PresencePenalty:  c.PresencePenalty,
 		FrequencyPenalty: c.FrequencyPenalty,
 	}
-	if req.Stream {
+	if stream {
 		openaiReq.StreamOptions = &streamOptions{IncludeUsage: true}
 	}
 
@@ -196,7 +198,7 @@ func (c *OpenAIClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse
 		return nil, formatOpenAIHTTPError(resp.StatusCode, body)
 	}
 
-	if req.Stream {
+	if stream {
 		return c.handleStream(resp.Body, req)
 	}
 
