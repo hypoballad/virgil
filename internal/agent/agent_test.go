@@ -2110,6 +2110,72 @@ func TestOmittedWriteFileArgumentDoesNotRequireStructuralRead(t *testing.T) {
 	}
 }
 
+func TestRawArgsToolCallIsNormalizedBeforeExecutionAndHistory(t *testing.T) {
+	rawArgs := `{"path":"report.md","content":"hello\nworld","mode":"append"}`
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						testToolCallWithArgs("write_file", map[string]interface{}{
+							"raw_args": rawArgs,
+						}),
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "done"}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	writeTool := &dummyTool{name: "write_file", response: "written", isMutating: true}
+	registry.Register(writeTool)
+	agentInst := New(mockLLM, registry)
+
+	resp, err := agentInst.RunWithOptions(context.Background(), nil, "write report", RunOptions{MaxIterations: 3})
+	if err != nil {
+		t.Fatalf("RunWithOptions error = %v", err)
+	}
+	if resp.FinalContent != "done" {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+	if writeTool.calls != 1 {
+		t.Fatalf("write_file calls=%d, want 1", writeTool.calls)
+	}
+	var executed struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+		Mode    string `json:"mode"`
+	}
+	if err := json.Unmarshal(writeTool.lastArgs, &executed); err != nil {
+		t.Fatalf("failed to unmarshal executed args: %v", err)
+	}
+	if executed.Path != "report.md" || executed.Content != "hello\nworld" || executed.Mode != "append" {
+		t.Fatalf("raw_args was not normalized before execution: %#v", executed)
+	}
+	for _, messages := range [][]llm.Message{resp.Messages, mockLLM.requests[1].Messages} {
+		found := false
+		for _, msg := range messages {
+			for _, tc := range msg.ToolCalls {
+				if tc.Function.Name != "write_file" {
+					continue
+				}
+				found = true
+				if _, ok := tc.Function.Arguments["raw_args"]; ok {
+					t.Fatalf("history retained raw_args: %#v", tc.Function.Arguments)
+				}
+				if got := tc.Function.Arguments["path"]; got != "report.md" {
+					t.Fatalf("history path = %#v, want report.md", got)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("write_file tool call missing from history")
+		}
+	}
+}
+
 func TestLargeEditArgumentsUnderSafetyLimitAreScrubbedFromHistoryAfterExecution(t *testing.T) {
 	for _, tt := range []struct {
 		name           string

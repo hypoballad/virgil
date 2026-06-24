@@ -967,6 +967,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 
 		toolCalls := chatResp.Message.ToolCalls
 		toolCalls = a.limitToolCallsPerIteration(toolCalls)
+		toolCalls = normalizeRawArgsToolCalls(toolCalls)
 		// chatResp.Message.ToolCalls も切り詰めて履歴の整合性を保つ
 		chatResp.Message.ToolCalls = toolCalls
 
@@ -1591,6 +1592,46 @@ func omittedToolArgumentScrubReason(toolName string) string {
 		return "write_file content placeholder was rejected; regenerate the full file content or read the current path before writing again"
 	}
 	return "omitted tool argument payload was discarded; use a structural read before regenerating a small real edit"
+}
+
+func normalizeRawArgsToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
+	if len(toolCalls) == 0 {
+		return toolCalls
+	}
+	out := make([]llm.ToolCall, len(toolCalls))
+	copy(out, toolCalls)
+	changed := false
+	for i, tc := range out {
+		normalized, ok := normalizeRawArgs(tc.Function.Arguments)
+		if !ok {
+			continue
+		}
+		tc.Function.Arguments = normalized
+		out[i] = tc
+		changed = true
+	}
+	if !changed {
+		return toolCalls
+	}
+	return out
+}
+
+func normalizeRawArgs(args map[string]interface{}) (map[string]interface{}, bool) {
+	if len(args) != 1 {
+		return nil, false
+	}
+	raw, ok := args["raw_args"].(string)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil || len(parsed) == 0 {
+		return nil, false
+	}
+	if _, nested := parsed["raw_args"]; nested && len(parsed) == 1 {
+		return nil, false
+	}
+	return parsed, true
 }
 
 func scrubToolCallArguments(messages []llm.Message, toolCallID string, reason string) []llm.Message {
