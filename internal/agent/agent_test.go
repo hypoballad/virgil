@@ -167,7 +167,7 @@ func TestRunReplacesStaleModeSystemPrompt(t *testing.T) {
 	}
 
 	req := mockLLM.requests[0]
-	if len(req.Messages) < 3 {
+	if len(req.Messages) < 2 {
 		t.Fatalf("request messages = %#v", req.Messages)
 	}
 	if !strings.Contains(req.Messages[0].Content, "You are in EDIT mode") {
@@ -176,8 +176,13 @@ func TestRunReplacesStaleModeSystemPrompt(t *testing.T) {
 	if strings.Contains(req.Messages[0].Content, "You are in PLAN mode") {
 		t.Fatalf("first system prompt still contains stale plan mode:\n%s", req.Messages[0].Content)
 	}
-	if !strings.Contains(req.Messages[1].Content, "Previous conversation summary") {
-		t.Fatalf("shrink summary system message should remain after replacing mode prompt: %#v", req.Messages)
+	if !strings.Contains(req.Messages[0].Content, "Previous conversation summary") {
+		t.Fatalf("shrink summary system message should be merged into leading system prompt: %#v", req.Messages)
+	}
+	for i, msg := range req.Messages[1:] {
+		if msg.Role == "system" {
+			t.Fatalf("non-leading system message at request[%d]: %#v", i+1, req.Messages)
+		}
 	}
 }
 
@@ -1633,6 +1638,38 @@ func TestPrepareMessagesDropsEmptyAssistantMessages(t *testing.T) {
 		}
 	}
 	if messages[1].Role != "assistant" || messages[1].Content != "" {
+		t.Fatalf("prepareMessagesForLLMRequest mutated original messages")
+	}
+}
+
+func TestPrepareMessagesMergesSystemMessagesAtStart(t *testing.T) {
+	messages := []llm.Message{
+		{Role: "system", Content: "primary system"},
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi"},
+		{Role: "system", Content: "slash command status"},
+		{Role: "user", Content: "next task"},
+		{Role: "system", Content: "compressed summary"},
+	}
+
+	prepared := prepareMessagesForLLMRequest(messages)
+	if len(prepared) != 4 {
+		t.Fatalf("prepared messages = %d, want 4: %#v", len(prepared), prepared)
+	}
+	if prepared[0].Role != "system" {
+		t.Fatalf("first message role = %q, want system", prepared[0].Role)
+	}
+	for _, want := range []string{"primary system", "slash command status", "compressed summary"} {
+		if !strings.Contains(prepared[0].Content, want) {
+			t.Fatalf("merged system prompt missing %q:\n%s", want, prepared[0].Content)
+		}
+	}
+	for i, msg := range prepared[1:] {
+		if msg.Role == "system" {
+			t.Fatalf("non-leading system message at prepared[%d]: %#v", i+1, prepared)
+		}
+	}
+	if messages[3].Role != "system" || messages[3].Content != "slash command status" {
 		t.Fatalf("prepareMessagesForLLMRequest mutated original messages")
 	}
 }

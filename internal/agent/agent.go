@@ -2175,7 +2175,44 @@ func prepareMessagesForLLMRequest(messages []llm.Message) []llm.Message {
 	prepared := compactToolResultMessages(messages)
 	prepared = compactToolCallArguments(prepared)
 	prepared = dropEmptyAssistantMessages(prepared)
+	prepared = mergeSystemMessagesForLLMRequest(prepared)
 	return prepared
+}
+
+func mergeSystemMessagesForLLMRequest(messages []llm.Message) []llm.Message {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	var systemParts []string
+	nonSystem := make([]llm.Message, 0, len(messages))
+	systemCount := 0
+	for _, msg := range messages {
+		if msg.Role != "system" {
+			nonSystem = append(nonSystem, msg)
+			continue
+		}
+		systemCount++
+		if content := strings.TrimSpace(msg.Content); content != "" {
+			systemParts = append(systemParts, content)
+		}
+	}
+	if systemCount == 0 {
+		return messages
+	}
+	if systemCount == 1 && messages[0].Role == "system" {
+		return messages
+	}
+
+	out := make([]llm.Message, 0, len(nonSystem)+1)
+	if len(systemParts) > 0 {
+		out = append(out, llm.Message{
+			Role:    "system",
+			Content: strings.Join(systemParts, "\n\n"),
+		})
+	}
+	out = append(out, nonSystem...)
+	return out
 }
 
 func dropEmptyAssistantMessages(messages []llm.Message) []llm.Message {
