@@ -978,6 +978,37 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 
 		// 各ツールを順次実行（制限後のリストを使う）
 		for _, tc := range toolCalls {
+			if blockMsg := malformedRawArgsBlockMessage(tc); blockMsg != "" {
+				argsJSON, _ := tc.Function.ArgumentsJSON()
+				log.Printf("agent: %s", blockMsg)
+				messages = scrubToolCallArguments(messages, tc.ID, "malformed raw_args payload was discarded; regenerate valid structured tool arguments")
+				record := ToolCallRecord{
+					Iteration:  iteration,
+					ToolCallID: tc.ID,
+					ToolName:   tc.Function.Name,
+					Arguments:  argsJSON,
+					Result: &tools.Result{
+						IsError: true,
+						Content: blockMsg,
+					},
+				}
+				response.ToolCalls = append(response.ToolCalls, record)
+				messages = append(messages, llm.Message{
+					Role:       "tool",
+					Content:    blockMsg,
+					ToolCallID: tc.ID,
+				})
+				a.emitProgress(ProgressEvent{
+					Type:            EventAgentActivity,
+					ActivityMessage: fmt.Sprintf("Warning: ⚠️ %s arguments malformed", tc.Function.Name),
+				})
+				if signal := a.watchdog.RecordToolFailure(tc.Function.Name, argsJSON, blockMsg); signal != nil {
+					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
+					return a.escalate(ctx, messages, response, signal)
+				}
+				continue
+			}
+
 			argsJSON, err := tc.Function.ArgumentsJSON()
 			if err != nil {
 				log.Printf("agent: failed to serialize args: %v", err)
@@ -1593,6 +1624,25 @@ func normalizeRawArgs(args map[string]interface{}) (map[string]interface{}, bool
 		return nil, false
 	}
 	return parsed, true
+}
+
+func malformedRawArgsBlockMessage(tc llm.ToolCall) string {
+	if len(tc.Function.Arguments) != 1 {
+		return ""
+	}
+	raw, ok := tc.Function.Arguments["raw_args"].(string)
+	if !ok {
+		return ""
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fmt.Sprintf("Tool %q blocked: tool arguments were malformed or empty. Regenerate a valid structured tool call with the required fields; do not reuse raw_args.", tc.Function.Name)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &parsed); err == nil && len(parsed) > 0 {
+		return ""
+	}
+	return fmt.Sprintf("Tool %q blocked: tool arguments were malformed or truncated before execution. Regenerate a valid structured tool call with the required fields; do not reuse raw_args. For write_file, include explicit path, content, and mode when writing an existing file.", tc.Function.Name)
 }
 
 func normalizeInlineToolCallMarkup(msg llm.Message) llm.Message {

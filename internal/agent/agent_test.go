@@ -2947,6 +2947,58 @@ func TestAgentBlocksOmittedToolArgumentPlaceholder(t *testing.T) {
 	}
 }
 
+func TestMalformedRawArgsBlockedBeforeShadowSnapshot(t *testing.T) {
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						testToolCallWithArgs("write_file", map[string]interface{}{
+							"raw_args": `{"path":"src/MAE_pytorch.py","content":"truncated`,
+						}),
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "regenerate"}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	writeTool := &dummyTool{name: "write_file", response: "should not run", isMutating: true}
+	registry.Register(writeTool)
+	shadow := &diffShadowSnapshotter{}
+	agentInst := New(mockLLM, registry)
+	agentInst.shadow = shadow
+
+	resp, err := agentInst.Run(context.Background(), nil, "write file")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if writeTool.calls != 0 {
+		t.Fatalf("write_file should not execute malformed raw_args, calls=%d", writeTool.calls)
+	}
+	if shadow.preCalls != 0 || shadow.postCalls != 0 {
+		t.Fatalf("shadow should not run for malformed raw_args, pre=%d post=%d", shadow.preCalls, shadow.postCalls)
+	}
+	if len(resp.ToolCalls) < 1 || resp.ToolCalls[0].Result == nil || !resp.ToolCalls[0].Result.IsError {
+		t.Fatalf("expected blocked tool call result, got %#v", resp.ToolCalls)
+	}
+	if got := resp.ToolCalls[0].Result.Content; !strings.Contains(got, "malformed or truncated") || strings.Contains(got, "path is required") {
+		t.Fatalf("unexpected block message: %s", got)
+	}
+	for _, msg := range resp.Messages {
+		for _, tc := range msg.ToolCalls {
+			if tc.Function.Name != "write_file" {
+				continue
+			}
+			if raw, ok := tc.Function.Arguments["raw_args"].(string); ok && strings.Contains(raw, "truncated") {
+				t.Fatalf("history retained malformed raw_args: %#v", tc.Function.Arguments)
+			}
+		}
+	}
+}
+
 func TestAgentNonMutatingToolNoShadow(t *testing.T) {
 	// 読み取り系ツールではシャドウgitを呼ばないことを確認
 	mockLLM := &mockLLM{
