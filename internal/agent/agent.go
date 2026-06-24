@@ -785,6 +785,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 	lastPreflightShrinkIteration := -1000000
 	semanticSafetyFailures := map[string]int{}
 	structuralRecovery := structuralReadRecovery{}
+	markdownRecovery := markdownReadRecovery{}
 	unavailableTools := map[string]bool{}
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
@@ -802,12 +803,21 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 		if structuralRecovery.Required {
 			toolDefs = structuralRecoveryToolDefinitions(toolDefs)
 		}
+		if markdownRecovery.Required {
+			toolDefs = markdownRecoveryToolDefinitions(toolDefs)
+		}
 		log.Printf("agent: passing %d tools to LLM", len(toolDefs))
 		requestMessages := prepareMessagesForLLMRequest(messages)
 		if structuralRecovery.Required {
 			requestMessages = append(cloneMessageSlice(requestMessages), llm.Message{
 				Role:    "user",
 				Content: structuralRecoveryToolChoicePrompt(structuralRecovery.Reason),
+			})
+		}
+		if markdownRecovery.Required {
+			requestMessages = append(cloneMessageSlice(requestMessages), llm.Message{
+				Role:    "user",
+				Content: markdownRecoveryToolChoicePrompt(markdownRecovery.Path),
 			})
 		}
 
@@ -828,6 +838,12 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 					requestMessages = append(cloneMessageSlice(requestMessages), llm.Message{
 						Role:    "user",
 						Content: structuralRecoveryToolChoicePrompt(structuralRecovery.Reason),
+					})
+				}
+				if markdownRecovery.Required {
+					requestMessages = append(cloneMessageSlice(requestMessages), llm.Message{
+						Role:    "user",
+						Content: markdownRecoveryToolChoicePrompt(markdownRecovery.Path),
 					})
 				}
 				heuristicEstimate = a.estimateTokenCountWithToolsRaw(requestMessages)
@@ -920,6 +936,16 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 		// tool_callsがなければ最終応答
 		if len(chatResp.Message.ToolCalls) == 0 {
 			content := chatResp.Message.Content
+			if markdownRecovery.Required {
+				log.Printf("agent: final response blocked until focused markdown read after full-read refusal")
+				messages = append(messages, chatResp.Message)
+				messages = append(messages, llm.Message{
+					Role:    "user",
+					Content: markdownRecoveryFinalPrompt(markdownRecovery.Path),
+				})
+				response.Messages = messages
+				continue
+			}
 			if structuralRecovery.Required {
 				log.Printf("agent: final response blocked until structural read after safety guard")
 				messages = append(messages, chatResp.Message)
@@ -1315,6 +1341,10 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 			})
 
 			if execErr != nil || (result != nil && result.IsError) {
+				if path, ok := markdownFullReadRefusal(resultContent, tc.Function.Name, argsJSON); ok {
+					markdownRecovery.Require(path)
+					log.Printf("agent: markdown read recovery required for %s", path)
+				}
 				if signal := a.watchdog.RecordToolFailure(tc.Function.Name, argsJSON, resultContent); signal != nil {
 					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
 					return a.escalate(ctx, messages, response, signal)
@@ -1326,6 +1356,10 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 					}
 				}
 			} else {
+				if markdownRecovery.Required && isMarkdownRecoveryToolCall(tc.Function.Name, argsJSON, markdownRecovery.Path) {
+					log.Printf("agent: markdown read recovery satisfied by %s", tc.Function.Name)
+					markdownRecovery.Clear()
+				}
 				if structuralRecovery.Required && isStructuralReadToolCall(tc.Function.Name, argsJSON) {
 					log.Printf("agent: structural read recovery satisfied by %s", tc.Function.Name)
 					structuralRecovery.ClearAfterStructuralRead()
@@ -1424,6 +1458,21 @@ type structuralReadRecovery struct {
 	VerifyAfterNextEdit  bool
 }
 
+type markdownReadRecovery struct {
+	Required bool
+	Path     string
+}
+
+func (r *markdownReadRecovery) Require(path string) {
+	r.Required = true
+	r.Path = path
+}
+
+func (r *markdownReadRecovery) Clear() {
+	r.Required = false
+	r.Path = ""
+}
+
 func (r *structuralReadRecovery) Require(reason string) {
 	r.Required = true
 	r.Reason = reason
@@ -1450,13 +1499,34 @@ func structuralRecoveryFinalPrompt(reason string) string {
 	return "Do not finish yet. " + structuralRecoveryInstruction(reason)
 }
 
+func markdownRecoveryFinalPrompt(path string) string {
+	return "Do not finish yet. " + markdownRecoveryInstruction(path)
+}
+
 func structuralRecoveryToolChoicePrompt(reason string) string {
 	return "Recovery step required before continuing. " + structuralRecoveryInstruction(reason) +
 		" The only available tools in this step are structural read tools. Choose one structural read for the current target now; do not attempt to edit, write, test, or finish."
 }
 
+func markdownRecoveryToolChoicePrompt(path string) string {
+	return "Recovery step required before continuing. " + markdownRecoveryInstruction(path) +
+		" The only available tools in this step are Markdown-focused read tools. Choose get_markdown_outline or read_markdown_section for the same Markdown file now; do not call read_file(path) without an explicit narrow range, edit, test, or finish."
+}
+
 func structuralRecoveryMutatingToolBlock(toolName, reason string) string {
 	return fmt.Sprintf("Tool %q blocked: %s", toolName, structuralRecoveryInstruction(reason))
+}
+
+func markdownRecoveryInstruction(path string) string {
+	path = strings.TrimSpace(path)
+	target := "the Markdown file"
+	if path != "" {
+		target = fmt.Sprintf("%q", path)
+	}
+	return fmt.Sprintf(
+		"A previous full Markdown read_file call was refused for %s. Do not repeat read_file with only path. First inspect the Markdown structure with get_markdown_outline, or read a specific heading with read_markdown_section. After that focused Markdown read succeeds, continue from the current file state.",
+		target,
+	)
 }
 
 func structuralRecoveryInstruction(reason string) string {
@@ -1502,10 +1572,72 @@ func structuralRecoveryToolDefinitions(defs []llm.ToolDefinition) []llm.ToolDefi
 	return filtered
 }
 
+func markdownRecoveryToolDefinitions(defs []llm.ToolDefinition) []llm.ToolDefinition {
+	filtered := make([]llm.ToolDefinition, 0, len(defs))
+	for _, def := range defs {
+		if isMarkdownRecoveryToolName(def.Function.Name) {
+			filtered = append(filtered, def)
+		}
+	}
+	if len(filtered) == 0 {
+		return defs
+	}
+	return filtered
+}
+
 func isStructuralRecoveryToolName(name string) bool {
 	switch name {
 	case "read_symbol", "get_file_outline", "get_symbol_outline", "get_markdown_outline", "read_markdown_section", "get_json_outline", "read_json_path", "get_file_imports", "read_file":
 		return true
+	default:
+		return false
+	}
+}
+
+func isMarkdownRecoveryToolName(name string) bool {
+	switch name {
+	case "get_markdown_outline", "read_markdown_section":
+		return true
+	default:
+		return false
+	}
+}
+
+func markdownFullReadRefusal(resultContent string, toolName string, argsJSON []byte) (string, bool) {
+	if toolName != "read_file" || !strings.Contains(resultContent, "Refusing full Markdown read") {
+		return "", false
+	}
+	var args struct {
+		Path      string `json:"path"`
+		StartLine int    `json:"start_line"`
+		EndLine   int    `json:"end_line"`
+	}
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		return "", true
+	}
+	if args.StartLine > 0 || args.EndLine > 0 {
+		return args.Path, false
+	}
+	return args.Path, true
+}
+
+func isMarkdownRecoveryToolCall(toolName string, argsJSON []byte, recoveryPath string) bool {
+	var args struct {
+		Path      string `json:"path"`
+		StartLine int    `json:"start_line"`
+		EndLine   int    `json:"end_line"`
+	}
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		return false
+	}
+	if recoveryPath != "" && args.Path != "" && args.Path != recoveryPath {
+		return false
+	}
+	switch toolName {
+	case "get_markdown_outline", "read_markdown_section":
+		return true
+	case "read_file":
+		return args.StartLine > 0 && args.EndLine >= args.StartLine
 	default:
 		return false
 	}

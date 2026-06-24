@@ -1265,6 +1265,92 @@ func TestMarkdownToolDescriptionsSteerAwayFromReadFile(t *testing.T) {
 	}
 }
 
+func TestMarkdownFullReadRefusalForcesFocusedMarkdownRecovery(t *testing.T) {
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						testToolCallWithArgs("read_file", map[string]interface{}{
+							"path": ".virgil/plan/status.md",
+						}),
+					},
+				},
+			},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						testToolCallWithArgs("get_markdown_outline", map[string]interface{}{
+							"path": ".virgil/plan/status.md",
+						}),
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "done"}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	readFile := &dummyTool{
+		name:     "read_file",
+		response: "Refusing full Markdown read to protect context: .virgil/plan/status.md",
+		isError:  true,
+	}
+	outline := &dummyTool{name: "get_markdown_outline", response: "# status\n1-20"}
+	section := &dummyTool{name: "read_markdown_section", response: "section"}
+	for _, tool := range []tools.Tool{readFile, outline, section} {
+		if err := registry.Register(tool); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	agentInst := New(mockLLM, registry)
+	resp, err := agentInst.RunWithOptions(context.Background(), nil, "update markdown status", RunOptions{
+		MaxIterations: 5,
+	})
+	if err != nil {
+		t.Fatalf("RunWithOptions error = %v", err)
+	}
+	if resp.FinalContent != "done" {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+	if readFile.calls != 1 {
+		t.Fatalf("read_file calls=%d, want 1", readFile.calls)
+	}
+	if outline.calls != 1 {
+		t.Fatalf("get_markdown_outline calls=%d, want 1", outline.calls)
+	}
+	if len(mockLLM.requests) != 3 {
+		t.Fatalf("LLM requests=%d, want 3", len(mockLLM.requests))
+	}
+
+	recoveryTools := map[string]bool{}
+	for _, def := range mockLLM.requests[1].Tools {
+		recoveryTools[def.Function.Name] = true
+	}
+	if recoveryTools["read_file"] {
+		t.Fatalf("read_file should be hidden during markdown recovery: %#v", recoveryTools)
+	}
+	for _, want := range []string{"get_markdown_outline", "read_markdown_section"} {
+		if !recoveryTools[want] {
+			t.Fatalf("markdown recovery tool %q missing: %#v", want, recoveryTools)
+		}
+	}
+	if got := joinMessageContent(mockLLM.requests[1].Messages); !strings.Contains(got, "previous full Markdown read_file call was refused") {
+		t.Fatalf("recovery prompt missing from second request:\n%s", got)
+	}
+
+	restoredTools := map[string]bool{}
+	for _, def := range mockLLM.requests[2].Tools {
+		restoredTools[def.Function.Name] = true
+	}
+	if !restoredTools["read_file"] {
+		t.Fatalf("read_file should be restored after focused markdown read succeeds: %#v", restoredTools)
+	}
+}
+
 func TestSystemPromptMentionsMarkdownException(t *testing.T) {
 	agent := New(&mockLLM{}, tools.NewRegistry())
 	prompt := agent.buildSystemPrompt()
