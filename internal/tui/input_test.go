@@ -15,6 +15,39 @@ func newInputTestModel() Model {
 	return NewModel(agent.New(nil, tools.NewRegistry()), nil, nil, nil, "session", "/tmp/workspace", "model", "", 12000, 5, 30)
 }
 
+func TestSetInitialHistoryRestoresConversationState(t *testing.T) {
+	model := newInputTestModel()
+	history := []llm.Message{
+		{Role: "system", Content: "Previous conversation summary from saved session:\n\nsummary"},
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi"},
+	}
+
+	model.SetInitialHistory(history, 3, "resumed")
+
+	if model.turnNumber != 3 {
+		t.Fatalf("turnNumber = %d, want 3", model.turnNumber)
+	}
+	if len(model.history) != len(history) {
+		t.Fatalf("history len = %d, want %d", len(model.history), len(history))
+	}
+	history[1].Content = "mutated"
+	if model.history[1].Content != "hello" {
+		t.Fatalf("history was not copied, got %q", model.history[1].Content)
+	}
+	got := make([]string, 0, len(model.messages))
+	for _, msg := range model.messages {
+		got = append(got, msg.Role+":"+msg.Content)
+	}
+	want := []string{"user:hello", "assistant:hi", "system:resumed"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+	if model.currentTokens == 0 {
+		t.Fatal("currentTokens should be initialized")
+	}
+}
+
 func TestInputEnterInsertsNewline(t *testing.T) {
 	model := newInputTestModel()
 	model.input.SetValue("first")

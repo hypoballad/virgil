@@ -29,7 +29,7 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "tsdiag" {
 		os.Exit(runTSDiagCommand(os.Args[2:]))
 	}
-	startupArgs, dangerousVMax, fullPowerCommands := parseStartupArgs(os.Args[1:])
+	startupArgs, dangerousVMax, fullPowerCommands, resumeTarget, forceNewSession := parseStartupArgs(os.Args[1:])
 
 	if err := godotenv.Overload(); err != nil {
 		// Ignore if no .env found
@@ -330,9 +330,9 @@ func main() {
 	}
 
 	// Session initialization
-	session, err := repo.Sessions.Create(modelName, workspaceRoot, "General Coding Task")
+	session, resumedHistory, resumedTurnNumber, resumed, err := initializeSession(repo, modelName, workspaceRoot, resumeTarget, forceNewSession)
 	if err != nil {
-		fmt.Printf("Fatal: failed to create session: %v\n", err)
+		fmt.Printf("Fatal: failed to initialize session: %v\n", err)
 		os.Exit(1)
 	}
 	defer func() {
@@ -357,6 +357,9 @@ func main() {
 
 	// TUI
 	model := tui.NewModel(agentInst, repo, shadowRepo, indexer, session.ID, workspaceRoot, modelName, version, watchdogConfig.ContextTokenLimit, agentTimeoutMinutes, runTimeoutMinutes, repo.Calls)
+	if resumed {
+		model.SetInitialHistory(resumedHistory, resumedTurnNumber, fmt.Sprintf("↩ Resumed session %s with %d saved messages.", shortSessionID(session.ID), len(resumedHistory)))
+	}
 	model.SetVMaxAvailable(dangerousVMax)
 	model.SetFullPowerCommands(fullPowerCommands)
 	p := tea.NewProgram(
@@ -444,21 +447,120 @@ func optionalIntEnv(name string) (*int, error) {
 	return &value, nil
 }
 
-func parseStartupArgs(args []string) ([]string, bool, bool) {
+func initializeSession(repo *repository.Repository, modelName, workspaceRoot, resumeTarget string, forceNewSession bool) (*repository.Session, []llm.Message, int, bool, error) {
+	if forceNewSession || strings.TrimSpace(resumeTarget) == "" {
+		session, err := repo.Sessions.Create(modelName, workspaceRoot, "General Coding Task")
+		return session, nil, 0, false, err
+	}
+
+	session, err := resolveResumeSession(repo, workspaceRoot, resumeTarget)
+	if err != nil {
+		return nil, nil, 0, false, err
+	}
+	history, err := repo.Turns.RebuildHistory(session.ID, 8)
+	if err != nil {
+		return nil, nil, 0, false, fmt.Errorf("rebuild history for session %s: %w", session.ID, err)
+	}
+	turns, err := repo.Turns.ListBySession(session.ID)
+	if err != nil {
+		return nil, nil, 0, false, fmt.Errorf("list turns for session %s: %w", session.ID, err)
+	}
+	turnNumber := 0
+	if len(turns) > 0 {
+		turnNumber = turns[len(turns)-1].TurnNumber
+	}
+	return session, history, turnNumber, true, nil
+}
+
+func resolveResumeSession(repo *repository.Repository, workspaceRoot string, target string) (*repository.Session, error) {
+	target = strings.TrimSpace(target)
+	if target == "" || strings.EqualFold(target, "latest") {
+		sessions, err := repo.Sessions.ListRecent(50)
+		if err != nil {
+			return nil, fmt.Errorf("list recent sessions: %w", err)
+		}
+		for _, session := range sessions {
+			if sameWorkspace(session.ProjectPath, workspaceRoot) {
+				return session, nil
+			}
+		}
+		return nil, fmt.Errorf("no previous session found for workspace %s", workspaceRoot)
+	}
+
+	session, err := repo.Sessions.Get(target)
+	if err != nil {
+		return nil, fmt.Errorf("get session %q: %w", target, err)
+	}
+	if !sameWorkspace(session.ProjectPath, workspaceRoot) {
+		return nil, fmt.Errorf("session %s belongs to workspace %s, not %s", shortSessionID(session.ID), session.ProjectPath, workspaceRoot)
+	}
+	return session, nil
+}
+
+func sameWorkspace(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	if errA == nil {
+		a = absA
+	}
+	if errB == nil {
+		b = absB
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+func shortSessionID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
+}
+
+func parseStartupArgs(args []string) ([]string, bool, bool, string, bool) {
 	filtered := make([]string, 0, len(args))
 	dangerousVMax := false
 	fullPowerCommands := false
-	for _, arg := range args {
+	resumeTarget := ""
+	forceNewSession := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch strings.ToLower(strings.TrimSpace(arg)) {
 		case "--dangerous-vmax":
 			dangerousVMax = true
 		case "fullpower":
 			fullPowerCommands = true
+		case "--new-session":
+			forceNewSession = true
+		case "--resume":
+			resumeTarget = "latest"
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") && !isStartupModeArg(args[i+1]) {
+				i++
+				resumeTarget = strings.TrimSpace(args[i])
+			}
 		default:
+			if value, ok := strings.CutPrefix(arg, "--resume="); ok {
+				resumeTarget = strings.TrimSpace(value)
+				if resumeTarget == "" {
+					resumeTarget = "latest"
+				}
+				continue
+			}
 			filtered = append(filtered, arg)
 		}
 	}
-	return filtered, dangerousVMax, fullPowerCommands
+	if forceNewSession {
+		resumeTarget = ""
+	}
+	return filtered, dangerousVMax, fullPowerCommands, resumeTarget, forceNewSession
+}
+
+func isStartupModeArg(arg string) bool {
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case "small", "default", "full", "fullpower":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveToolProfile(args []string) string {

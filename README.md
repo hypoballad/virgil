@@ -98,6 +98,15 @@ For local development from this checkout:
 go run ./cmd/virgil
 ```
 
+Resume the latest saved session for the current workspace:
+
+```bash
+virgil --resume
+virgil --resume <session-id>
+```
+
+Use `--new-session` to force a fresh session when resume-related environment or shell aliases are present.
+
 Then ask natural coding questions or request edits:
 
 ```text

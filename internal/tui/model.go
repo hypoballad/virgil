@@ -267,6 +267,34 @@ func (m *Model) SetFullPowerCommands(enabled bool) {
 	m.updateSlashCompletion()
 }
 
+func (m *Model) SetInitialHistory(history []llm.Message, turnNumber int, notice string) {
+	m.history = append([]llm.Message(nil), history...)
+	m.messages = displayMessagesFromHistory(history)
+	if notice != "" {
+		m.messages = append(m.messages, llm.Message{
+			Role:    "system",
+			Content: notice,
+		})
+	}
+	m.turnNumber = turnNumber
+	if m.agent != nil {
+		m.currentTokens = m.agent.EstimateContextTokens(m.history)
+	}
+}
+
+func displayMessagesFromHistory(history []llm.Message) []llm.Message {
+	messages := make([]llm.Message, 0, len(history))
+	for _, msg := range history {
+		switch msg.Role {
+		case "user", "assistant":
+			if msg.Content != "" {
+				messages = append(messages, msg)
+			}
+		}
+	}
+	return messages
+}
+
 func (m *Model) setInputSize(outerWidth int) {
 	if outerWidth <= 0 {
 		outerWidth = defaultInputOuterWidth
