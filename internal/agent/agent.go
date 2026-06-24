@@ -793,8 +793,17 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 
 		// ツール定義を取得
 		toolDefs := a.toolDefinitions()
+		if structuralRecovery.Required {
+			toolDefs = structuralRecoveryToolDefinitions(toolDefs)
+		}
 		log.Printf("agent: passing %d tools to LLM", len(toolDefs))
 		requestMessages := prepareMessagesForLLMRequest(messages)
+		if structuralRecovery.Required {
+			requestMessages = append(cloneMessageSlice(requestMessages), llm.Message{
+				Role:    "user",
+				Content: structuralRecoveryToolChoicePrompt(structuralRecovery.Reason),
+			})
+		}
 
 		// 推定トークン数を計算してTUIを先行更新（ユーザーへのフィードバック用）
 		heuristicEstimate := a.estimateTokenCountWithToolsRaw(requestMessages)
@@ -808,6 +817,12 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				response.Messages = messages
 				lastPreflightShrinkIteration = iteration
 				requestMessages = prepareMessagesForLLMRequest(messages)
+				if structuralRecovery.Required {
+					requestMessages = append(cloneMessageSlice(requestMessages), llm.Message{
+						Role:    "user",
+						Content: structuralRecoveryToolChoicePrompt(structuralRecovery.Reason),
+					})
+				}
 				heuristicEstimate = a.estimateTokenCountWithToolsRaw(requestMessages)
 				localEstimate = a.applyTokenCalibration(heuristicEstimate)
 				log.Printf(
@@ -1425,6 +1440,11 @@ func structuralRecoveryFinalPrompt(reason string) string {
 	return "Do not finish yet. " + structuralRecoveryInstruction(reason)
 }
 
+func structuralRecoveryToolChoicePrompt(reason string) string {
+	return "Recovery step required before continuing. " + structuralRecoveryInstruction(reason) +
+		" The only available tools in this step are structural read tools. Choose one structural read for the current target now; do not attempt to edit, write, test, or finish."
+}
+
 func structuralRecoveryMutatingToolBlock(toolName, reason string) string {
 	return fmt.Sprintf("Tool %q blocked: %s", toolName, structuralRecoveryInstruction(reason))
 }
@@ -1443,7 +1463,7 @@ func structuralRecoveryInstruction(reason string) string {
 
 func isStructuralReadToolCall(toolName string, argsJSON []byte) bool {
 	switch toolName {
-	case "read_symbol", "get_file_outline", "get_symbol_outline":
+	case "read_symbol", "get_file_outline", "get_symbol_outline", "get_markdown_outline", "read_markdown_section", "get_json_outline", "read_json_path", "get_file_imports":
 		return true
 	case "read_file":
 		var args struct {
@@ -1454,6 +1474,28 @@ func isStructuralReadToolCall(toolName string, argsJSON []byte) bool {
 			return false
 		}
 		return args.StartLine > 0 && args.EndLine >= args.StartLine && args.EndLine-args.StartLine <= 200
+	default:
+		return false
+	}
+}
+
+func structuralRecoveryToolDefinitions(defs []llm.ToolDefinition) []llm.ToolDefinition {
+	filtered := make([]llm.ToolDefinition, 0, len(defs))
+	for _, def := range defs {
+		if isStructuralRecoveryToolName(def.Function.Name) {
+			filtered = append(filtered, def)
+		}
+	}
+	if len(filtered) == 0 {
+		return defs
+	}
+	return filtered
+}
+
+func isStructuralRecoveryToolName(name string) bool {
+	switch name {
+	case "read_symbol", "get_file_outline", "get_symbol_outline", "get_markdown_outline", "read_markdown_section", "get_json_outline", "read_json_path", "get_file_imports", "read_file":
+		return true
 	default:
 		return false
 	}
@@ -2180,6 +2222,12 @@ func prepareMessagesForLLMRequest(messages []llm.Message) []llm.Message {
 	prepared = dropEmptyAssistantMessages(prepared)
 	prepared = mergeSystemMessagesForLLMRequest(prepared)
 	return prepared
+}
+
+func cloneMessageSlice(messages []llm.Message) []llm.Message {
+	out := make([]llm.Message, len(messages))
+	copy(out, messages)
+	return out
 }
 
 func mergeSystemMessagesForLLMRequest(messages []llm.Message) []llm.Message {
