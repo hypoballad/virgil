@@ -630,6 +630,8 @@ func (a *Agent) RunBtw(ctx context.Context, history []llm.Message, question stri
 		response.PromptTokens += promptTokens
 		response.CompletionTokens += chatResp.CompletionTokens
 
+		chatResp.Message = normalizeInlineToolCallMarkup(chatResp.Message)
+
 		a.emitProgress(ProgressEvent{
 			Type:             EventTokenUpdate,
 			PromptTokens:     promptTokens,
@@ -889,6 +891,8 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 		response.Iterations = iteration + 1
 		response.PromptTokens += promptTokens
 		response.CompletionTokens += chatResp.CompletionTokens
+
+		chatResp.Message = normalizeInlineToolCallMarkup(chatResp.Message)
 
 		// 進捗通知: 正確なトークン数で上書き（PromptTokens は実測値）
 		a.emitProgress(ProgressEvent{
@@ -1632,6 +1636,79 @@ func normalizeRawArgs(args map[string]interface{}) (map[string]interface{}, bool
 		return nil, false
 	}
 	return parsed, true
+}
+
+func normalizeInlineToolCallMarkup(msg llm.Message) llm.Message {
+	if len(msg.ToolCalls) > 0 || !strings.Contains(msg.Content, "<tool_call>") {
+		return msg
+	}
+	toolCalls, content := parseInlineToolCallMarkup(msg.Content)
+	if len(toolCalls) == 0 {
+		return msg
+	}
+	msg.Content = strings.TrimSpace(content)
+	msg.ToolCalls = toolCalls
+	return msg
+}
+
+func parseInlineToolCallMarkup(content string) ([]llm.ToolCall, string) {
+	blockRe := regexp.MustCompile(`(?s)<tool_call>\s*<function=([A-Za-z_][A-Za-z0-9_]*)>\s*(.*?)</tool_call>`)
+	paramRe := regexp.MustCompile(`<parameter=([A-Za-z_][A-Za-z0-9_]*)>`)
+	matches := blockRe.FindAllStringSubmatchIndex(content, -1)
+	if len(matches) == 0 {
+		return nil, content
+	}
+
+	toolCalls := make([]llm.ToolCall, 0, len(matches))
+	var cleaned strings.Builder
+	last := 0
+	for i, match := range matches {
+		cleaned.WriteString(content[last:match[0]])
+		last = match[1]
+
+		name := content[match[2]:match[3]]
+		body := content[match[4]:match[5]]
+		args := map[string]interface{}{}
+		params := paramRe.FindAllStringSubmatchIndex(body, -1)
+		for j, param := range params {
+			key := strings.TrimSpace(body[param[2]:param[3]])
+			valueStart := param[1]
+			valueEnd := len(body)
+			if j+1 < len(params) {
+				valueEnd = params[j+1][0]
+			}
+			value := strings.TrimSpace(body[valueStart:valueEnd])
+			if key == "" {
+				continue
+			}
+			args[key] = parseInlineToolCallValue(value)
+		}
+		if name == "" || len(args) == 0 {
+			continue
+		}
+		toolCalls = append(toolCalls, llm.ToolCall{
+			ID: fmt.Sprintf("inline_tool_call_%d", i+1),
+			Function: llm.FunctionCall{
+				Name:      name,
+				Arguments: args,
+			},
+		})
+	}
+	cleaned.WriteString(content[last:])
+	return toolCalls, cleaned.String()
+}
+
+func parseInlineToolCallValue(value string) interface{} {
+	switch strings.ToLower(value) {
+	case "true":
+		return true
+	case "false":
+		return false
+	}
+	if n, err := strconv.Atoi(value); err == nil {
+		return n
+	}
+	return value
 }
 
 func scrubToolCallArguments(messages []llm.Message, toolCallID string, reason string) []llm.Message {

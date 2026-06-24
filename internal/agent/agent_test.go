@@ -1267,6 +1267,61 @@ func TestAgentSingleToolCall(t *testing.T) {
 	}
 }
 
+func TestInlineToolCallMarkupIsExecuted(t *testing.T) {
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role:    "assistant",
+					Content: "I need one more check.\n\n<tool_call> <function=read_file> <parameter=end_line> 151  <parameter=path> src/MAE_pytorch.py  <parameter=start_line> 145   </tool_call>",
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "Done!"}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	readTool := &dummyTool{name: "read_file", response: "tail"}
+	registry.Register(readTool)
+	agent := New(mockLLM, registry)
+
+	resp, err := agent.Run(context.Background(), nil, "Use the inline tool")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.FinalContent != "Done!" {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+	if readTool.calls != 1 {
+		t.Fatalf("read_file calls=%d, want 1", readTool.calls)
+	}
+	var args struct {
+		Path      string `json:"path"`
+		StartLine int    `json:"start_line"`
+		EndLine   int    `json:"end_line"`
+	}
+	if err := json.Unmarshal(readTool.lastArgs, &args); err != nil {
+		t.Fatalf("failed to unmarshal read_file args: %v", err)
+	}
+	if args.Path != "src/MAE_pytorch.py" || args.StartLine != 145 || args.EndLine != 151 {
+		t.Fatalf("inline tool args not parsed correctly: %#v", args)
+	}
+	foundInlineCall := false
+	for _, msg := range resp.Messages {
+		if strings.Contains(msg.Content, "<tool_call>") {
+			t.Fatalf("history retained inline tool markup: %q", msg.Content)
+		}
+		for _, tc := range msg.ToolCalls {
+			if tc.ID == "inline_tool_call_1" && tc.Function.Name == "read_file" {
+				foundInlineCall = true
+			}
+		}
+	}
+	if !foundInlineCall {
+		t.Fatalf("inline tool call was not preserved in history: %#v", resp.Messages)
+	}
+}
+
 func TestLimitToolCallsAllowsReadOnlyParallelism(t *testing.T) {
 	registry := tools.NewRegistry()
 	registry.Register(&dummyTool{name: "read_tool", response: "ok"})
