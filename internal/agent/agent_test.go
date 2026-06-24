@@ -1619,6 +1619,31 @@ func TestCompactToolResultMessagesEnforcesTotalBudget(t *testing.T) {
 	}
 }
 
+func TestCompactToolResultMessagesCompactsHugeRecentResult(t *testing.T) {
+	huge := strings.Repeat("huge result line\n", 3000)
+	messages := []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{testToolCallWithID("huge_call", "read_file")}},
+		{Role: "tool", ToolCallID: "huge_call", Content: huge},
+	}
+
+	compacted := compactToolResultMessages(messages)
+	if compacted[1].Content == huge {
+		t.Fatal("huge recent tool result remained raw")
+	}
+	for _, want := range []string{
+		"[tool result omitted to save context]",
+		"Tool: read_file",
+		"Original chars:",
+	} {
+		if !strings.Contains(compacted[1].Content, want) {
+			t.Fatalf("compacted result missing %q:\n%s", want, compacted[1].Content)
+		}
+	}
+	if messages[1].Content != huge {
+		t.Fatal("compactToolResultMessages mutated original messages")
+	}
+}
+
 func TestPrepareMessagesDropsEmptyAssistantMessages(t *testing.T) {
 	messages := []llm.Message{
 		{Role: "system", Content: "sys"},

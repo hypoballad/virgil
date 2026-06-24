@@ -95,6 +95,8 @@ const (
 	toolArgumentCompactionChars = 1200
 	toolResultTotalBudgetTokens = 3000
 	toolResultMinRawRecent      = 2
+	toolResultHardMaxChars      = 20000
+	toolResultHardMaxTokens     = 6000
 )
 
 type toolResultCompactionPolicy struct {
@@ -2372,7 +2374,8 @@ func compactToolResultMessages(messages []llm.Message) []llm.Message {
 	for _, info := range infos {
 		msg := out[info.MessageIndex]
 		policy := toolResultCompactionPolicyFor(info.ToolName)
-		if info.Ordinal > totalsByTool[info.ToolName]-policy.KeepRecent {
+		forceCompact := shouldForceCompactToolResult(msg.Content)
+		if !forceCompact && info.Ordinal > totalsByTool[info.ToolName]-policy.KeepRecent {
 			continue
 		}
 		if !shouldCompactToolResult(msg.Content, policy) {
@@ -2493,6 +2496,13 @@ func shouldCompactToolResult(content string, policy toolResultCompactionPolicy) 
 		return false
 	}
 	return true
+}
+
+func shouldForceCompactToolResult(content string) bool {
+	if strings.HasPrefix(content, "[tool result omitted to save context]") {
+		return false
+	}
+	return len(content) > toolResultHardMaxChars || tokenizer.EstimateTokens(content) > toolResultHardMaxTokens
 }
 
 func compactToolResultContent(toolName, toolCallID string, args map[string]interface{}, content string) string {

@@ -72,6 +72,35 @@ func TestReadFileTool(t *testing.T) {
 		}
 	})
 
+	t.Run("cap open ended range", func(t *testing.T) {
+		var sb strings.Builder
+		for i := 1; i <= MaxReadRangeLines+50; i++ {
+			sb.WriteString(fmt.Sprintf("line %d\n", i))
+		}
+		path := filepath.Join(tmpDir, "open_range.txt")
+		os.WriteFile(path, []byte(sb.String()), 0644)
+
+		args := readFileArgs{Path: "open_range.txt", StartLine: 10}
+		rawArgs, _ := json.Marshal(args)
+		result, err := tool.Execute(context.Background(), rawArgs)
+
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected tool error: %s", result.Content)
+		}
+		if !strings.Contains(result.Content, fmt.Sprintf("lines 10-%d", 10+MaxReadRangeLines-1)) {
+			t.Fatalf("expected capped line range header, got:\n%s", result.Content)
+		}
+		if !strings.Contains(result.Content, "read_file range capped") {
+			t.Fatalf("expected capped range guidance, got:\n%s", result.Content)
+		}
+		if result.Metadata["range_capped"] != true {
+			t.Fatalf("expected range_capped metadata, got %#v", result.Metadata)
+		}
+	})
+
 	t.Run("refuse full markdown read", func(t *testing.T) {
 		content := "# Report\n\n## Section\n\nbody\n"
 		path := filepath.Join(tmpDir, "report.md")

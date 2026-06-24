@@ -21,6 +21,9 @@ const (
 
 	// FullCodeReadLineLimit はコードファイルの範囲なし全文読みを許可する最大行数
 	FullCodeReadLineLimit = 100
+
+	// MaxReadRangeLines は1回の read_file range で返す最大行数
+	MaxReadRangeLines = 200
 )
 
 type ReadFileTool struct {
@@ -65,7 +68,7 @@ func (t *ReadFileTool) Definition() ToolDefinition {
 					},
 					"end_line": map[string]interface{}{
 						"type":        "integer",
-						"description": "Optional. End line number (inclusive). Default: read to end of file.",
+						"description": "Optional. End line number (inclusive). If omitted with start_line, read_file returns a bounded range.",
 					},
 				},
 				"required": []string{"path"},
@@ -299,6 +302,12 @@ func (t *ReadFileTool) readRange(path string, startLine, endLine int) (*Result, 
 	if startLine < 1 {
 		startLine = 1
 	}
+	requestedEndLine := endLine
+	capped := false
+	if endLine == 0 || endLine-startLine+1 > MaxReadRangeLines {
+		endLine = startLine + MaxReadRangeLines - 1
+		capped = true
+	}
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("File: %s (lines %d-%d)\n", filepath.Base(path), startLine, endLine))
@@ -326,12 +335,22 @@ func (t *ReadFileTool) readRange(path string, startLine, endLine int) (*Result, 
 		return ErrorResult(fmt.Sprintf("scan error: %v", err)), nil
 	}
 
+	if capped && actualLines == MaxReadRangeLines {
+		sb.WriteString(fmt.Sprintf(
+			"\n[read_file range capped at %d lines. Continue with start_line=%d and end_line=... if more context is needed.]\n",
+			MaxReadRangeLines,
+			endLine+1,
+		))
+	}
+
 	result := SuccessResult(sb.String())
 	result.Metadata = map[string]interface{}{
-		"start_line":   startLine,
-		"end_line":     endLine,
-		"actual_lines": actualLines,
-		"mode":         "range",
+		"start_line":         startLine,
+		"end_line":           endLine,
+		"requested_end_line": requestedEndLine,
+		"actual_lines":       actualLines,
+		"range_capped":       capped,
+		"mode":               "range",
 	}
 	return result, nil
 }
