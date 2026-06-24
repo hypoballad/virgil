@@ -56,6 +56,8 @@ LLM_PROVIDER=openai
 OPENAI_API_BASE=http://127.0.0.1:8081/v1
 OPENAI_API_KEY=
 OPENAI_MODEL=qwen
+OPENAI_TEMPERATURE=0.3
+OPENAI_TOP_P=0.9
 ```
 
 OpenAI API:
@@ -74,6 +76,7 @@ Useful optional settings:
 - `DEBUG=1`: enable debug logging
 - `VIRGIL_AGENT_TIMEOUT_MINUTES`: timeout for normal requests
 - `VIRGIL_RUN_TIMEOUT_MINUTES`: timeout for generated task execution
+- `OPENAI_TEMPERATURE`, `OPENAI_TOP_P`, `OPENAI_MAX_TOKENS`: optional OpenAI-compatible generation parameters
 - `VIRGIL_RUN_AUTO_ALLOW`: comma-separated command prefixes to auto-allow
 - `VIRGIL_RUN_DENY`: comma-separated command patterns to deny
 

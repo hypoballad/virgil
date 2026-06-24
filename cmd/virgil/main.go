@@ -118,11 +118,21 @@ func main() {
 			apiBase = "http://127.0.0.1:8081/v1"
 		}
 		apiKey := os.Getenv("OPENAI_API_KEY")
+		openAIParams, err := loadOpenAIParametersFromEnv()
+		if err != nil {
+			fmt.Printf("Fatal: invalid OpenAI-compatible generation setting: %v\n", err)
+			os.Exit(1)
+		}
 
 		client = &llm.OpenAIClient{
-			BaseURL: apiBase,
-			Model:   modelName,
-			APIKey:  apiKey,
+			BaseURL:          apiBase,
+			Model:            modelName,
+			APIKey:           apiKey,
+			Temperature:      openAIParams.Temperature,
+			TopP:             openAIParams.TopP,
+			MaxTokens:        openAIParams.MaxTokens,
+			PresencePenalty:  openAIParams.PresencePenalty,
+			FrequencyPenalty: openAIParams.FrequencyPenalty,
 		}
 	} else {
 		fmt.Printf("Fatal: unknown LLM_PROVIDER: %s\n", provider)
@@ -347,6 +357,61 @@ func main() {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
 	}
+}
+
+type openAIParameters struct {
+	Temperature      *float64
+	TopP             *float64
+	MaxTokens        *int
+	PresencePenalty  *float64
+	FrequencyPenalty *float64
+}
+
+func loadOpenAIParametersFromEnv() (openAIParameters, error) {
+	var params openAIParameters
+	var err error
+
+	if params.Temperature, err = optionalFloatEnv("OPENAI_TEMPERATURE"); err != nil {
+		return openAIParameters{}, err
+	}
+	if params.TopP, err = optionalFloatEnv("OPENAI_TOP_P"); err != nil {
+		return openAIParameters{}, err
+	}
+	if params.MaxTokens, err = optionalIntEnv("OPENAI_MAX_TOKENS"); err != nil {
+		return openAIParameters{}, err
+	}
+	if params.PresencePenalty, err = optionalFloatEnv("OPENAI_PRESENCE_PENALTY"); err != nil {
+		return openAIParameters{}, err
+	}
+	if params.FrequencyPenalty, err = optionalFloatEnv("OPENAI_FREQUENCY_PENALTY"); err != nil {
+		return openAIParameters{}, err
+	}
+
+	return params, nil
+}
+
+func optionalFloatEnv(name string) (*float64, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be a number: %w", name, err)
+	}
+	return &value, nil
+}
+
+func optionalIntEnv(name string) (*int, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be an integer: %w", name, err)
+	}
+	return &value, nil
 }
 
 func parseStartupArgs(args []string) ([]string, bool, bool) {

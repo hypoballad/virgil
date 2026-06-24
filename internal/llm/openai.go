@@ -12,9 +12,14 @@ import (
 )
 
 type OpenAIClient struct {
-	BaseURL string
-	Model   string
-	APIKey  string
+	BaseURL          string
+	Model            string
+	APIKey           string
+	Temperature      *float64
+	TopP             *float64
+	MaxTokens        *int
+	PresencePenalty  *float64
+	FrequencyPenalty *float64
 }
 
 type openaiMessage struct {
@@ -47,12 +52,17 @@ type openaiToolFunction struct {
 }
 
 type openaiChatRequest struct {
-	Model          string          `json:"model"`
-	Messages       []openaiMessage `json:"messages"`
-	Stream         bool            `json:"stream"`
-	StreamOptions  *streamOptions  `json:"stream_options,omitempty"`
-	Tools          []openaiTool    `json:"tools,omitempty"`
-	ResponseFormat interface{}     `json:"response_format,omitempty"`
+	Model            string          `json:"model"`
+	Messages         []openaiMessage `json:"messages"`
+	Stream           bool            `json:"stream"`
+	StreamOptions    *streamOptions  `json:"stream_options,omitempty"`
+	Tools            []openaiTool    `json:"tools,omitempty"`
+	ResponseFormat   interface{}     `json:"response_format,omitempty"`
+	Temperature      *float64        `json:"temperature,omitempty"`
+	TopP             *float64        `json:"top_p,omitempty"`
+	MaxTokens        *int            `json:"max_tokens,omitempty"`
+	PresencePenalty  *float64        `json:"presence_penalty,omitempty"`
+	FrequencyPenalty *float64        `json:"frequency_penalty,omitempty"`
 }
 
 type streamOptions struct {
@@ -105,9 +115,14 @@ func (c *OpenAIClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse
 	}
 
 	openaiReq := openaiChatRequest{
-		Model:    req.Model,
-		Stream:   req.Stream,
-		Messages: make([]openaiMessage, len(req.Messages)),
+		Model:            req.Model,
+		Stream:           req.Stream,
+		Messages:         make([]openaiMessage, len(req.Messages)),
+		Temperature:      c.Temperature,
+		TopP:             c.TopP,
+		MaxTokens:        c.MaxTokens,
+		PresencePenalty:  c.PresencePenalty,
+		FrequencyPenalty: c.FrequencyPenalty,
 	}
 	if req.Stream {
 		openaiReq.StreamOptions = &streamOptions{IncludeUsage: true}

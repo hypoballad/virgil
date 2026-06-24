@@ -78,6 +78,55 @@ func TestOpenAIClient_ChatStream(t *testing.T) {
 	}
 }
 
+func TestOpenAIClient_ChatIncludesConfiguredGenerationParameters(t *testing.T) {
+	var got map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	temperature := 0.2
+	topP := 0.9
+	maxTokens := 2048
+	presencePenalty := 0.1
+	frequencyPenalty := 0.3
+	client := &OpenAIClient{
+		BaseURL:          server.URL,
+		Model:            "test-model",
+		Temperature:      &temperature,
+		TopP:             &topP,
+		MaxTokens:        &maxTokens,
+		PresencePenalty:  &presencePenalty,
+		FrequencyPenalty: &frequencyPenalty,
+	}
+
+	if _, err := client.Chat(context.Background(), ChatRequest{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	}); err != nil {
+		t.Fatalf("Chat failed: %v", err)
+	}
+
+	if got["temperature"] != 0.2 {
+		t.Fatalf("temperature = %v, want 0.2", got["temperature"])
+	}
+	if got["top_p"] != 0.9 {
+		t.Fatalf("top_p = %v, want 0.9", got["top_p"])
+	}
+	if got["max_tokens"] != float64(2048) {
+		t.Fatalf("max_tokens = %v, want 2048", got["max_tokens"])
+	}
+	if got["presence_penalty"] != 0.1 {
+		t.Fatalf("presence_penalty = %v, want 0.1", got["presence_penalty"])
+	}
+	if got["frequency_penalty"] != 0.3 {
+		t.Fatalf("frequency_penalty = %v, want 0.3", got["frequency_penalty"])
+	}
+}
+
 func TestOpenAIRequest_StreamOptions_IncludedWhenStreaming(t *testing.T) {
 	req := openaiChatRequest{
 		Model:         "gpt-5-mini",

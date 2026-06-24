@@ -14,7 +14,7 @@ Virgil currently supports these backend profiles through environment variables:
 | llama.cpp OpenAI-compatible server | `LLM_PROVIDER=openai` with local `OPENAI_API_BASE` | Local OpenAI-compatible operation |
 | OpenAI API | `LLM_PROVIDER=openai` with `https://api.openai.com/v1` | Cloud API, paid |
 
-The code path for llama.cpp and OpenAI API is the same `OpenAIClient`. Only `OPENAI_API_BASE`, `OPENAI_API_KEY`, and `OPENAI_MODEL` differ.
+The code path for llama.cpp and OpenAI API is the same `OpenAIClient`. `OPENAI_API_BASE`, `OPENAI_API_KEY`, and `OPENAI_MODEL` select the endpoint and model; optional `OPENAI_*` generation parameters are sent only when set.
 
 ## Environment Variables
 
@@ -30,6 +30,11 @@ Relevant variables:
 | `OPENAI_API_BASE` | `cmd/virgil/main.go` | Defaults to `http://127.0.0.1:8081/v1` |
 | `OPENAI_API_KEY` | `cmd/virgil/main.go` | Optional for local llama.cpp; required for OpenAI API |
 | `OPENAI_MODEL` | `cmd/virgil/main.go` | Defaults to `qwen` for OpenAI-compatible mode |
+| `OPENAI_TEMPERATURE` | `cmd/virgil/main.go` | Optional; sent as `temperature` |
+| `OPENAI_TOP_P` | `cmd/virgil/main.go` | Optional; sent as `top_p` |
+| `OPENAI_MAX_TOKENS` | `cmd/virgil/main.go` | Optional; sent as `max_tokens` |
+| `OPENAI_PRESENCE_PENALTY` | `cmd/virgil/main.go` | Optional; sent as `presence_penalty` |
+| `OPENAI_FREQUENCY_PENALTY` | `cmd/virgil/main.go` | Optional; sent as `frequency_penalty` |
 | `VIRGIL_WORKSPACE` | `cmd/virgil/main.go` | Workspace root; defaults to current directory |
 | `VIRGIL_DB_PATH` | `cmd/virgil/main.go` | Optional DB path override |
 | `DEBUG` | `cmd/virgil/main.go` | Any non-empty value enables debug logging |
@@ -65,6 +70,9 @@ LLM_PROVIDER=openai
 OPENAI_API_BASE=http://127.0.0.1:8081/v1
 OPENAI_API_KEY=
 OPENAI_MODEL=qwen
+OPENAI_TEMPERATURE=0.3
+OPENAI_TOP_P=0.9
+OPENAI_MAX_TOKENS=8192
 VIRGIL_WATCHDOG_CONTEXT_LIMIT=12000
 ```
 
@@ -85,6 +93,8 @@ LLM_PROVIDER=openai
 OPENAI_API_BASE=https://api.openai.com/v1
 OPENAI_API_KEY=sk-...your-key-here
 OPENAI_MODEL=gpt-5-mini
+OPENAI_TEMPERATURE=0.2
+OPENAI_TOP_P=0.9
 VIRGIL_WATCHDOG_CONTEXT_LIMIT=100000
 ```
 
