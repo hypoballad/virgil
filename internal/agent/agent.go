@@ -2025,8 +2025,9 @@ func (a *Agent) escalate(ctx context.Context, messages []llm.Message, response *
 		Role:    "user",
 		Content: prompt,
 	})
+	requestMessages := prepareMessagesForLLMRequest(escalateMessages)
 
-	localEstimate := a.estimateTokenCount(escalateMessages)
+	localEstimate := a.estimateTokenCount(requestMessages)
 	a.emitProgress(ProgressEvent{
 		Type:         EventTokenUpdate,
 		PromptTokens: localEstimate,
@@ -2034,7 +2035,7 @@ func (a *Agent) escalate(ctx context.Context, messages []llm.Message, response *
 	})
 
 	finalResp, err := a.llmClient.Chat(ctx, llm.ChatRequest{
-		Messages: escalateMessages,
+		Messages: requestMessages,
 		Tools:    nil,
 		Stream:   true,
 		StreamFunc: func(partial string) {
@@ -2050,7 +2051,7 @@ func (a *Agent) escalate(ctx context.Context, messages []llm.Message, response *
 	}
 
 	// escalate の LLM呼び出しも記録（iteration は -1 で特殊マーク）
-	a.recordExchange(ExchangeIterationEscalate, escalateMessages, nil, nil, finalResp)
+	a.recordExchange(ExchangeIterationEscalate, requestMessages, nil, nil, finalResp)
 
 	promptTokens := finalResp.PromptTokens
 	if promptTokens == 0 {

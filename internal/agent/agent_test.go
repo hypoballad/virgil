@@ -2397,6 +2397,51 @@ func TestAgentMaxIterations(t *testing.T) {
 	}
 }
 
+func TestEscalationMergesSystemMessagesForLLMRequest(t *testing.T) {
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{Message: llm.Message{Role: "assistant", Content: "Stopped"}},
+		},
+	}
+	agentInst := New(mockLLM, tools.NewRegistry())
+	response := &Response{}
+	messages := []llm.Message{
+		{Role: "system", Content: "primary system"},
+		{Role: "user", Content: "task"},
+		{Role: "system", Content: "Previous conversation summary"},
+		{Role: "assistant", Content: "working"},
+		{Role: "system", Content: "VMAX enabled"},
+	}
+
+	resp, err := agentInst.escalate(context.Background(), messages, response, &StopSignal{
+		Reason: StopReasonLoopDetected,
+		Detail: "test loop",
+	})
+	if err != nil {
+		t.Fatalf("escalate error = %v", err)
+	}
+	if resp.FinalContent != "Stopped" {
+		t.Fatalf("FinalContent = %q, want Stopped", resp.FinalContent)
+	}
+	if len(mockLLM.requests) != 1 {
+		t.Fatalf("LLM requests = %d, want 1", len(mockLLM.requests))
+	}
+	reqMessages := mockLLM.requests[0].Messages
+	if reqMessages[0].Role != "system" {
+		t.Fatalf("first message role = %q, want system", reqMessages[0].Role)
+	}
+	for _, want := range []string{"primary system", "Previous conversation summary", "VMAX enabled"} {
+		if !strings.Contains(reqMessages[0].Content, want) {
+			t.Fatalf("merged system message missing %q:\n%s", want, reqMessages[0].Content)
+		}
+	}
+	for i, msg := range reqMessages[1:] {
+		if msg.Role == "system" {
+			t.Fatalf("non-leading system message at request[%d]: %#v", i+1, reqMessages)
+		}
+	}
+}
+
 func TestAgentRecoversAfterFirstEmptyResponse(t *testing.T) {
 	mockLLM := &mockLLM{
 		responses: []llm.ChatResponse{
