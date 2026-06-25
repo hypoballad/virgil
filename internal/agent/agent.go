@@ -869,6 +869,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 	lastPreflightShrinkIteration := -1000000
 	semanticSafetyFailures := map[string]int{}
 	successfulExplorationCalls := map[string]int{}
+	failedExplorationCalls := map[string]int{}
 	structuralRecovery := structuralReadRecovery{}
 	markdownRecovery := markdownReadRecovery{}
 	unavailableTools := map[string]bool{}
@@ -1178,6 +1179,27 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				continue
 			}
 
+			if count := failedExplorationCalls[callHash(tc.Function.Name, argsJSON)]; shouldBlockRepeatedFailedExploration(tc.Function.Name, count) {
+				blockMsg := repeatedFailedExplorationBlockMessage(tc.Function.Name, argsJSON, count)
+				log.Printf("agent: %s", blockMsg)
+				record.Result = &tools.Result{
+					IsError: true,
+					Content: blockMsg,
+				}
+				record.Error = nil
+				response.ToolCalls = append(response.ToolCalls, record)
+				messages = append(messages, llm.Message{
+					Role:       "tool",
+					Content:    blockMsg,
+					ToolCallID: tc.ID,
+				})
+				a.emitProgress(ProgressEvent{
+					Type:            EventAgentActivity,
+					ActivityMessage: fmt.Sprintf("Warning: ⚠️ %s duplicate failure blocked", tc.Function.Name),
+				})
+				continue
+			}
+
 			// ウォッチドッグ: ループ検出
 			if !skipIdenticalToolCallWatchdog(tc.Function.Name) {
 				if signal := a.watchdog.RecordToolCall(tc.Function.Name, argsJSON); signal != nil {
@@ -1419,6 +1441,9 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 			})
 
 			if execErr != nil || (result != nil && result.IsError) {
+				if isRepeatedExplorationGuardTool(tc.Function.Name) {
+					failedExplorationCalls[callHash(tc.Function.Name, argsJSON)]++
+				}
 				if path, ok := markdownFullReadRefusal(resultContent, tc.Function.Name, argsJSON); ok {
 					markdownRecovery.Require(path)
 					log.Printf("agent: markdown read recovery required for %s", path)
@@ -3575,6 +3600,10 @@ func shouldBlockRepeatedSuccessfulExploration(toolName string, previousSuccesses
 	return previousSuccesses >= 2 && isRepeatedExplorationGuardTool(toolName)
 }
 
+func shouldBlockRepeatedFailedExploration(toolName string, previousFailures int) bool {
+	return previousFailures >= 1 && isRepeatedExplorationGuardTool(toolName)
+}
+
 func skipIdenticalToolCallWatchdog(toolName string) bool {
 	return toolName == "read_file"
 }
@@ -3586,6 +3615,15 @@ func repeatedSuccessfulExplorationBlockMessage(toolName string, argsJSON []byte,
 		previousSuccesses,
 		string(argsJSON),
 		toolName,
+	)
+}
+
+func repeatedFailedExplorationBlockMessage(toolName string, argsJSON []byte, previousFailures int) string {
+	return fmt.Sprintf(
+		"Tool %q blocked: the same exploratory call already failed %d time(s) with identical arguments (%s). Do not repeat it. Treat the previous error as evidence that the target is unavailable or misspelled; switch to another lookup such as find_symbol, get_file_outline with a receiver/name_filter, search_text, or adjust the symbol/path.",
+		toolName,
+		previousFailures,
+		string(argsJSON),
 	)
 }
 

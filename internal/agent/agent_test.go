@@ -2869,6 +2869,59 @@ func TestRepeatedReadFileIsAllowedForCurrentStateRecovery(t *testing.T) {
 	}
 }
 
+func TestRepeatedFailedExplorationIsSoftBlockedBeforeWatchdogStop(t *testing.T) {
+	repeatedReadSymbol := testToolCallWithArgs("read_symbol", map[string]interface{}{
+		"path":        "src/MAE.py",
+		"symbol_name": "myTrainer",
+	})
+	fallbackFindSymbol := testToolCallWithArgs("find_symbol", map[string]interface{}{
+		"name": "Trainer",
+	})
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedReadSymbol}}},
+			{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedReadSymbol}}},
+			{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{fallbackFindSymbol}}},
+			{Message: llm.Message{Role: "assistant", Content: "Switched lookup strategy."}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	readSymbol := &dummyTool{
+		name:     "read_symbol",
+		response: "Symbol \"myTrainer\" not found in src/MAE.py",
+		isError:  true,
+	}
+	findSymbol := &dummyTool{name: "find_symbol", response: "MAE_train"}
+	registry.Register(readSymbol)
+	registry.Register(findSymbol)
+	agentInst := New(mockLLM, registry)
+
+	resp, err := agentInst.RunWithOptions(context.Background(), nil, "continue migration", RunOptions{MaxIterations: 6})
+	if err != nil {
+		t.Fatalf("RunWithOptions error = %v", err)
+	}
+	if resp.WatchdogStop != nil {
+		t.Fatalf("WatchdogStop = %#v, want nil", resp.WatchdogStop)
+	}
+	if readSymbol.calls != 1 {
+		t.Fatalf("read_symbol calls = %d, want 1; second identical failure should be blocked before execution", readSymbol.calls)
+	}
+	if findSymbol.calls != 1 {
+		t.Fatalf("find_symbol calls = %d, want 1", findSymbol.calls)
+	}
+	if resp.FinalContent != "Switched lookup strategy." {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+	if len(resp.ToolCalls) < 2 {
+		t.Fatalf("ToolCalls = %d, want at least 2", len(resp.ToolCalls))
+	}
+	second := resp.ToolCalls[1]
+	if second.Result == nil || !second.Result.IsError || !strings.Contains(second.Result.Content, "same exploratory call already failed") {
+		t.Fatalf("second repeated failed exploration was not soft-blocked: %#v", second.Result)
+	}
+}
+
 func TestEscalationMergesSystemMessagesForLLMRequest(t *testing.T) {
 	mockLLM := &mockLLM{
 		responses: []llm.ChatResponse{
