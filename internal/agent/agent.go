@@ -1423,6 +1423,10 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 					markdownRecovery.Require(path)
 					log.Printf("agent: markdown read recovery required for %s", path)
 				}
+				if path, ok := editPatternNotFound(resultContent, tc.Function.Name, argsJSON); ok {
+					structuralRecovery.Require(fmt.Sprintf("edit_with_pattern could not find the requested text in %s", path))
+					log.Printf("agent: structural read recovery required after edit_with_pattern not-found for %s", path)
+				}
 				if signal := a.watchdog.RecordToolFailure(tc.Function.Name, argsJSON, resultContent); signal != nil {
 					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
 					return a.escalate(ctx, messages, response, signal)
@@ -1630,7 +1634,7 @@ func isStructuralReadToolCall(toolName string, argsJSON []byte) bool {
 		if err := json.Unmarshal(argsJSON, &args); err != nil {
 			return false
 		}
-		return args.StartLine > 0 && args.EndLine >= args.StartLine && args.EndLine-args.StartLine <= 200
+		return args.StartLine > 0 && (args.EndLine == 0 || (args.EndLine >= args.StartLine && args.EndLine-args.StartLine <= 200))
 	default:
 		return false
 	}
@@ -1694,6 +1698,19 @@ func markdownFullReadRefusal(resultContent string, toolName string, argsJSON []b
 	}
 	if args.StartLine > 0 || args.EndLine > 0 {
 		return args.Path, false
+	}
+	return args.Path, true
+}
+
+func editPatternNotFound(resultContent string, toolName string, argsJSON []byte) (string, bool) {
+	if toolName != "edit_with_pattern" || !strings.Contains(resultContent, "find_text not found") {
+		return "", false
+	}
+	var args struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		return "", true
 	}
 	return args.Path, true
 }

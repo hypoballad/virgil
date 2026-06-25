@@ -1404,6 +1404,93 @@ func TestMarkdownFullReadRefusalForcesFocusedMarkdownRecovery(t *testing.T) {
 	}
 }
 
+func TestEditWithPatternNotFoundForcesStructuralReadBeforeNextEdit(t *testing.T) {
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						testToolCallWithArgs("edit_with_pattern", map[string]interface{}{
+							"path":         "src/MAE_pytorch.py",
+							"find_text":    "old signature",
+							"replace_with": "new signature",
+						}),
+					},
+				},
+			},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						testToolCallWithArgs("write_file", map[string]interface{}{
+							"path":    "src/MAE_pytorch.py",
+							"content": "stale rewrite",
+							"mode":    "overwrite",
+						}),
+					},
+				},
+			},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						testToolCallWithArgs("read_file", map[string]interface{}{
+							"path":       "src/MAE_pytorch.py",
+							"start_line": 430,
+						}),
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "recovered from current source"}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	editTool := &dummyTool{
+		name:       "edit_with_pattern",
+		response:   "find_text not found in src/MAE_pytorch.py.\n\nTip: Use read_file to see the exact content, then copy the text precisely.",
+		isError:    true,
+		isMutating: true,
+	}
+	writeTool := &dummyTool{name: "write_file", response: "should not run", isMutating: true}
+	readTool := &dummyTool{name: "read_file", response: "current lines around myCA"}
+	for _, tool := range []tools.Tool{editTool, writeTool, readTool} {
+		if err := registry.Register(tool); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	agentInst := New(mockLLM, registry)
+	resp, err := agentInst.RunWithOptions(context.Background(), nil, "continue migration", RunOptions{
+		MaxIterations: 6,
+	})
+	if err != nil {
+		t.Fatalf("RunWithOptions error = %v", err)
+	}
+	if resp.WatchdogStop != nil {
+		t.Fatalf("WatchdogStop = %#v, want nil", resp.WatchdogStop)
+	}
+	if resp.FinalContent != "recovered from current source" {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+	if editTool.calls != 1 {
+		t.Fatalf("edit_with_pattern calls=%d, want 1", editTool.calls)
+	}
+	if writeTool.calls != 0 {
+		t.Fatalf("write_file should be blocked before execution, calls=%d", writeTool.calls)
+	}
+	if readTool.calls != 1 {
+		t.Fatalf("read_file calls=%d, want 1", readTool.calls)
+	}
+	if len(mockLLM.requests) < 3 {
+		t.Fatalf("LLM requests=%d, want at least 3", len(mockLLM.requests))
+	}
+	if got := joinMessageContent(mockLLM.requests[1].Messages); !strings.Contains(got, "edit_with_pattern could not find the requested text") {
+		t.Fatalf("second request should include structural recovery prompt:\n%s", got)
+	}
+}
+
 func TestSystemPromptMentionsMarkdownException(t *testing.T) {
 	agent := New(&mockLLM{}, tools.NewRegistry())
 	prompt := agent.buildSystemPrompt()
@@ -1427,6 +1514,7 @@ func TestSystemPromptMentionsTargetedEditPolicy(t *testing.T) {
 		"edit_with_pattern directly",
 		"exact problematic line",
 		"do not read the entire file first",
+		"Never call write_file with empty content for an existing file",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("system prompt missing %q", want)

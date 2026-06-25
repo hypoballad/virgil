@@ -148,10 +148,18 @@ func (t *WriteFileTool) Execute(ctx context.Context, rawArgs json.RawMessage) (*
 		}
 	}
 
+	if fileExists && args.Content == "" {
+		return ErrorResult(fmt.Sprintf(
+			"refusing to write empty content to existing file: %s. "+
+				"Use edit_file or edit_with_pattern for precise deletions, or retry write_file with explicit non-empty content and mode='append' or mode='overwrite'.",
+			args.Path,
+		)), nil
+	}
+
 	if fileExists && args.Mode == "" {
 		return ErrorResult(fmt.Sprintf(
 			"refusing to overwrite existing file without explicit mode: %s. "+
-				"Use edit_file or edit_with_pattern for existing files, mode='append' to append, or mode='overwrite' only to intentionally replace the entire file.",
+				"Use edit_file or edit_with_pattern for existing files. If you intended to append to the end, retry with mode='append' and the exact non-empty content. Use mode='overwrite' only to intentionally replace the entire file.",
 			args.Path,
 		)), nil
 	}

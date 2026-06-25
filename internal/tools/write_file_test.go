@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -95,6 +96,42 @@ func TestWriteFileRefusesImplicitOverwrite(t *testing.T) {
 	content, _ := os.ReadFile(existingPath)
 	if string(content) != "original" {
 		t.Errorf("expected original content to remain, got %q", string(content))
+	}
+}
+
+func TestWriteFileRejectsEmptyContentForExistingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	existingPath := filepath.Join(tmpDir, "existing.txt")
+	if err := os.WriteFile(existingPath, []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewWriteFileTool(tmpDir)
+	for _, mode := range []string{"", "append", "overwrite"} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			args, _ := json.Marshal(writeFileArgs{
+				Path:    "existing.txt",
+				Content: "",
+				Mode:    mode,
+			})
+
+			result, err := tool.Execute(context.Background(), args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.IsError {
+				t.Fatal("expected empty write to existing file to be refused")
+			}
+			if !strings.Contains(result.Content, "refusing to write empty content to existing file") {
+				t.Fatalf("unexpected error: %s", result.Content)
+			}
+
+			content, _ := os.ReadFile(existingPath)
+			if string(content) != "original" {
+				t.Fatalf("expected original content to remain, got %q", string(content))
+			}
+		})
 	}
 }
 
