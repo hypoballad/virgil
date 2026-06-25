@@ -297,7 +297,7 @@ func (a *Agent) SummarizeHistory(ctx context.Context, messages []llm.Message) (s
 
 	summary := strings.TrimSpace(resp.Message.Content)
 	if summary == "" {
-		return "", errors.New("summary was empty")
+		summary = fallbackHistorySummary(messages)
 	}
 	return summary, nil
 }
@@ -3119,6 +3119,48 @@ func compactSearchTextResult(toolName, toolCallID string, args map[string]interf
 	}
 	sb.WriteString("Use search_text with a narrower path/pattern if full results are needed again.")
 	return sb.String()
+}
+
+func fallbackHistorySummary(messages []llm.Message) string {
+	var sb strings.Builder
+	sb.WriteString("LLM summarization returned empty output. Deterministic fallback summary:\n")
+	limit := 20
+	start := 0
+	if len(messages) > limit {
+		start = len(messages) - limit
+		sb.WriteString(fmt.Sprintf("- Preserved the most recent %d of %d older messages.\n", limit, len(messages)))
+	} else {
+		sb.WriteString(fmt.Sprintf("- Preserved %d older messages.\n", len(messages)))
+	}
+	for i, msg := range messages[start:] {
+		originalIndex := start + i + 1
+		item := summarizeMessageForFallback(msg)
+		if item == "" {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("- Message %d (%s): %s\n", originalIndex, msg.Role, item))
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func summarizeMessageForFallback(msg llm.Message) string {
+	if len(msg.ToolCalls) > 0 {
+		names := make([]string, 0, len(msg.ToolCalls))
+		for _, tc := range msg.ToolCalls {
+			names = append(names, tc.Function.Name)
+		}
+		return fmt.Sprintf("tool calls: %s", strings.Join(names, ", "))
+	}
+	content := strings.TrimSpace(msg.Content)
+	if content == "" {
+		return ""
+	}
+	content = strings.Join(strings.Fields(content), " ")
+	runes := []rune(content)
+	if len(runes) > 220 {
+		content = string(runes[:220]) + "..."
+	}
+	return content
 }
 
 func compactReadFileResult(toolName, toolCallID string, args map[string]interface{}, content string) string {

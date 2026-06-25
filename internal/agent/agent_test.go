@@ -354,6 +354,40 @@ func TestSummarizeHistoryRecordsLLMExchangeWhenTurnIsSet(t *testing.T) {
 	}
 }
 
+func TestSummarizeHistoryFallsBackWhenLLMReturnsEmptySummary(t *testing.T) {
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{Message: llm.Message{Role: "assistant", Content: "   "}},
+		},
+	}
+	agent := New(mockLLM, tools.NewRegistry())
+
+	summary, err := agent.SummarizeHistory(context.Background(), []llm.Message{
+		{Role: "user", Content: "MAE migration task started"},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				testToolCallWithArgs("read_symbol", map[string]interface{}{
+					"path":        "src/MAE.py",
+					"symbol_name": "myTrainer",
+				}),
+			},
+		},
+		{Role: "tool", Content: "Symbol \"myTrainer\" not found in src/MAE.py"},
+	})
+	if err != nil {
+		t.Fatalf("SummarizeHistory error = %v", err)
+	}
+	if !strings.Contains(summary, "Deterministic fallback summary") {
+		t.Fatalf("summary missing fallback marker:\n%s", summary)
+	}
+	for _, want := range []string{"MAE migration task started", "read_symbol", "myTrainer"} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("summary missing %q:\n%s", want, summary)
+		}
+	}
+}
+
 func TestPreflightShrinkRunsOnlyWhenEnabled(t *testing.T) {
 	history := []llm.Message{
 		{Role: "user", Content: strings.Repeat("older context ", 200)},
