@@ -216,14 +216,25 @@ func TestShouldAutoShrinkTriggersAtFiftyPercent(t *testing.T) {
 	}
 }
 
-func TestShouldAutoShrinkTriggersWhenHistoryIsLarge(t *testing.T) {
+func TestShouldAutoShrinkDoesNotTriggerForLargeHistoryAtLowTokenUsage(t *testing.T) {
 	model := testModel()
 	model.history = shrinkableHistory(autoShrinkMessageLimit + 1)
 
 	decision := model.shouldAutoShrink(10, 100)
 
+	if decision.trigger {
+		t.Fatal("should not auto-shrink large history at low token usage")
+	}
+}
+
+func TestShouldAutoShrinkTriggersWhenHistoryIsLargeAndTokenUsageIsNotLow(t *testing.T) {
+	model := testModel()
+	model.history = shrinkableHistory(autoShrinkMessageLimit + 1)
+
+	decision := model.shouldAutoShrink(30, 100)
+
 	if !decision.trigger {
-		t.Fatal("expected auto-shrink when history has more than 20 messages")
+		t.Fatal("expected auto-shrink when history is large and token usage is not low")
 	}
 }
 

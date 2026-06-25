@@ -1545,12 +1545,13 @@ func (m *Model) showRewindHistory() tea.Cmd {
 }
 
 const (
-	shrinkRecentMessages     = 6
-	shrinkMaxMessagesToInput = 24
-	autoShrinkInfoPercent    = 30
-	autoShrinkTriggerPercent = 50
-	autoShrinkMessageLimit   = 20
-	autoShrinkCooldown       = 6
+	shrinkRecentMessages        = 6
+	shrinkMaxMessagesToInput    = 24
+	autoShrinkInfoPercent       = 30
+	autoShrinkTriggerPercent    = 50
+	autoShrinkMessageMinPercent = 30
+	autoShrinkMessageLimit      = 20
+	autoShrinkCooldown          = 6
 )
 
 type autoShrinkDecision struct {
@@ -1594,12 +1595,12 @@ func (m *Model) shouldAutoShrink(estimatedTokens int, contextLimit int) autoShri
 	}
 
 	triggerByTokens := contextLimit > 0 && percent >= autoShrinkTriggerPercent
-	triggerByMessages := len(m.history) > autoShrinkMessageLimit
+	triggerByMessages := len(m.history) > autoShrinkMessageLimit && percent >= autoShrinkMessageMinPercent
 	trigger := triggerByTokens || triggerByMessages
 	if triggerByTokens {
 		decision.reason = fmt.Sprintf("context usage %d%%", percent)
 	} else if triggerByMessages {
-		decision.reason = fmt.Sprintf("history has %d messages", len(m.history))
+		decision.reason = fmt.Sprintf("history has %d messages and context usage %d%%", len(m.history), percent)
 	}
 
 	cooldownActive := m.lastAutoShrinkHistoryLen > 0 && len(m.history)-m.lastAutoShrinkHistoryLen < autoShrinkCooldown
