@@ -868,6 +868,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 	verificationSucceeded := false
 	lastPreflightShrinkIteration := -1000000
 	semanticSafetyFailures := map[string]int{}
+	successfulExplorationCalls := map[string]int{}
 	structuralRecovery := structuralReadRecovery{}
 	markdownRecovery := markdownReadRecovery{}
 	unavailableTools := map[string]bool{}
@@ -1156,6 +1157,31 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				return response, nil
 			}
 
+			if count := successfulExplorationCalls[callHash(tc.Function.Name, argsJSON)]; shouldBlockRepeatedSuccessfulExploration(tc.Function.Name, count) {
+				blockMsg := repeatedSuccessfulExplorationBlockMessage(tc.Function.Name, argsJSON, count)
+				log.Printf("agent: %s", blockMsg)
+				record.Result = &tools.Result{
+					IsError: true,
+					Content: blockMsg,
+				}
+				record.Error = nil
+				response.ToolCalls = append(response.ToolCalls, record)
+				messages = append(messages, llm.Message{
+					Role:       "tool",
+					Content:    blockMsg,
+					ToolCallID: tc.ID,
+				})
+				a.emitProgress(ProgressEvent{
+					Type:            EventAgentActivity,
+					ActivityMessage: fmt.Sprintf("Warning: ⚠️ %s duplicate blocked", tc.Function.Name),
+				})
+				if signal := a.watchdog.RecordToolFailure(tc.Function.Name, argsJSON, blockMsg); signal != nil {
+					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
+					return a.escalate(ctx, messages, response, signal)
+				}
+				continue
+			}
+
 			// ウォッチドッグ: ループ検出
 			if signal := a.watchdog.RecordToolCall(tc.Function.Name, argsJSON); signal != nil {
 				log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
@@ -1440,6 +1466,9 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 					}
 				}
 			} else {
+				if isRepeatedExplorationGuardTool(tc.Function.Name) {
+					successfulExplorationCalls[callHash(tc.Function.Name, argsJSON)]++
+				}
 				if markdownRecovery.Required && isMarkdownRecoveryToolCall(tc.Function.Name, argsJSON, markdownRecovery.Path) {
 					log.Printf("agent: markdown read recovery satisfied by %s", tc.Function.Name)
 					markdownRecovery.Clear()
@@ -3548,6 +3577,29 @@ func isExploratoryTool(name string) bool {
 	default:
 		return false
 	}
+}
+
+func isRepeatedExplorationGuardTool(name string) bool {
+	switch name {
+	case "search_text", "read_file", "read_symbol", "find_symbol", "get_file_outline", "get_symbol_outline", "get_markdown_outline", "read_markdown_section", "list_files":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldBlockRepeatedSuccessfulExploration(toolName string, previousSuccesses int) bool {
+	return previousSuccesses >= 2 && isRepeatedExplorationGuardTool(toolName)
+}
+
+func repeatedSuccessfulExplorationBlockMessage(toolName string, argsJSON []byte, previousSuccesses int) string {
+	return fmt.Sprintf(
+		"Tool %q blocked: the same exploratory call already succeeded %d times with identical arguments (%s). Do not repeat it. Use the previous result already in context, switch to a structural tool such as find_symbol/get_file_outline/read_symbol, or call %q again only with a narrower path or pattern.",
+		toolName,
+		previousSuccesses,
+		string(argsJSON),
+		toolName,
+	)
 }
 
 // emitProgress は progress channel にイベントを送信する

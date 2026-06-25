@@ -2622,6 +2622,46 @@ func TestAgentMaxIterations(t *testing.T) {
 	}
 }
 
+func TestAgentBlocksThirdRepeatedSuccessfulSearchBeforeWatchdogStop(t *testing.T) {
+	repeatedSearch := testToolCallWithArgs("search_text", map[string]interface{}{
+		"pattern": "class.*Trainer",
+	})
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedSearch}}},
+			{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedSearch}}},
+			{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedSearch}}},
+			{Message: llm.Message{Role: "assistant", Content: "Used prior search result and continued."}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	searchTool := &dummyTool{name: "search_text", response: "large trainer search result"}
+	registry.Register(searchTool)
+	agentInst := New(mockLLM, registry)
+
+	resp, err := agentInst.RunWithOptions(context.Background(), nil, "continue migration", RunOptions{MaxIterations: 6})
+	if err != nil {
+		t.Fatalf("RunWithOptions error = %v", err)
+	}
+	if resp.WatchdogStop != nil {
+		t.Fatalf("WatchdogStop = %#v, want nil", resp.WatchdogStop)
+	}
+	if resp.FinalContent != "Used prior search result and continued." {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+	if searchTool.calls != 2 {
+		t.Fatalf("search_text calls = %d, want 2; third identical call should be blocked before execution", searchTool.calls)
+	}
+	if len(resp.ToolCalls) != 3 {
+		t.Fatalf("ToolCalls = %d, want 3", len(resp.ToolCalls))
+	}
+	third := resp.ToolCalls[2]
+	if third.Result == nil || !third.Result.IsError || !strings.Contains(third.Result.Content, "already succeeded 2 times") {
+		t.Fatalf("third repeated search was not blocked with recovery guidance: %#v", third.Result)
+	}
+}
+
 func TestEscalationMergesSystemMessagesForLLMRequest(t *testing.T) {
 	mockLLM := &mockLLM{
 		responses: []llm.ChatResponse{
