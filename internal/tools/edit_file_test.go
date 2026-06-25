@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -362,5 +363,40 @@ func TestEditFileRejectsOmittedPlaceholderStringBeforeWrite(t *testing.T) {
 	content, _ := os.ReadFile(testFile)
 	if string(content) != initial {
 		t.Fatalf("file changed despite rejection:\n%s", string(content))
+	}
+}
+
+func TestEditFileAllowsLargeLineReplacement(t *testing.T) {
+	tmpDir, _ := os.MkdirTemp("", "edit-test-*")
+	defer os.RemoveAll(tmpDir)
+
+	testFile := filepath.Join(tmpDir, "large.py")
+	initial := "print('replace me')\n"
+	os.WriteFile(testFile, []byte(initial), 0644)
+
+	newLines := make([]string, 0, 1500)
+	for i := 0; i < 1500; i++ {
+		newLines = append(newLines, fmt.Sprintf("print(%d)", i))
+	}
+
+	tool := NewEditFileTool(tmpDir)
+	args, _ := json.Marshal(map[string]interface{}{
+		"path":       "large.py",
+		"start_line": 1,
+		"end_line":   1,
+		"new_lines":  newLines,
+	})
+
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("expected large edit_file replacement to succeed, got: %s", result.Content)
+	}
+
+	content, _ := os.ReadFile(testFile)
+	if got := strings.Count(string(content), "\n"); got != len(newLines) {
+		t.Fatalf("line count = %d, want %d", got, len(newLines))
 	}
 }

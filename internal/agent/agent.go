@@ -1175,17 +1175,15 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 					Type:            EventAgentActivity,
 					ActivityMessage: fmt.Sprintf("Warning: ⚠️ %s duplicate blocked", tc.Function.Name),
 				})
-				if signal := a.watchdog.RecordToolFailure(tc.Function.Name, argsJSON, blockMsg); signal != nil {
-					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
-					return a.escalate(ctx, messages, response, signal)
-				}
 				continue
 			}
 
 			// ウォッチドッグ: ループ検出
-			if signal := a.watchdog.RecordToolCall(tc.Function.Name, argsJSON); signal != nil {
-				log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
-				return a.escalate(ctx, messages, response, signal)
+			if !skipIdenticalToolCallWatchdog(tc.Function.Name) {
+				if signal := a.watchdog.RecordToolCall(tc.Function.Name, argsJSON); signal != nil {
+					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
+					return a.escalate(ctx, messages, response, signal)
+				}
 			}
 
 			if tools.ContainsOmittedToolArgument(tc.Function.Arguments) {
@@ -1219,36 +1217,6 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 						log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
 						return a.escalate(ctx, messages, response, signal)
 					}
-				}
-				continue
-			}
-
-			if blockMsg := largeEditSafetyBlock(opts, tc.Function.Name, argsJSON); blockMsg != "" {
-				log.Printf("agent: %s", blockMsg)
-				structuralRecovery.Require("a large edit was blocked and its payload was discarded")
-				messages = scrubToolCallArguments(messages, tc.ID, "large edit payload was discarded; use a structural read before regenerating a smaller edit")
-				record.Result = &tools.Result{
-					IsError: true,
-					Content: blockMsg,
-				}
-				record.Error = nil
-				response.ToolCalls = append(response.ToolCalls, record)
-				messages = append(messages, llm.Message{
-					Role:       "tool",
-					Content:    blockMsg,
-					ToolCallID: tc.ID,
-				})
-				a.emitProgress(ProgressEvent{
-					Type:            EventAgentActivity,
-					ActivityMessage: fmt.Sprintf("Warning: ⚠️ %s blocked", tc.Function.Name),
-				})
-				if signal := a.watchdog.RecordToolFailure(tc.Function.Name, argsJSON, blockMsg); signal != nil {
-					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
-					return a.escalate(ctx, messages, response, signal)
-				}
-				if signal := recordSemanticSafetyFailure(semanticSafetyFailures, "large_edit", tc.Function.Name, blockMsg); signal != nil {
-					log.Printf("agent: watchdog stop: %s - %s", signal.Reason, signal.Detail)
-					return a.escalate(ctx, messages, response, signal)
 				}
 				continue
 			}
@@ -1560,10 +1528,6 @@ func isVMaxRunOptions(opts RunOptions) bool {
 	return opts.MaxIterations >= VMaxIterations || (opts.AutoConfirmRunCommand && opts.PreflightShrink)
 }
 
-func largeEditSafetyBlock(opts RunOptions, toolName string, argsJSON []byte) string {
-	return ""
-}
-
 type structuralReadRecovery struct {
 	Required             bool
 	Reason               string
@@ -1785,8 +1749,6 @@ func semanticSafetyFailureKind(resultContent string) string {
 		return "omitted_tool_argument"
 	case strings.Contains(resultContent, "serialized list of code lines"):
 		return "serialized_code_line_list"
-	case strings.Contains(resultContent, "large-edit safety"):
-		return "large_edit"
 	default:
 		return ""
 	}
@@ -1804,7 +1766,7 @@ func recordSemanticSafetyFailure(counts map[string]int, kind string, toolName st
 	return &StopSignal{
 		Reason: StopReasonLoopDetected,
 		Detail: fmt.Sprintf(
-			"tool %q hit safety guard %q %d times in this run. Stop retrying the same large or omitted edit payload; use a structural read of the current target, then split the edit into smaller steps. Last error: %s",
+			"tool %q hit safety guard %q %d times in this run. Stop retrying the same omitted or unsafe payload; use a structural read of the current target, then regenerate real tool arguments from current source. Last error: %s",
 			toolName,
 			kind,
 			counts[key],
@@ -3581,7 +3543,7 @@ func isExploratoryTool(name string) bool {
 
 func isRepeatedExplorationGuardTool(name string) bool {
 	switch name {
-	case "search_text", "read_file", "read_symbol", "find_symbol", "get_file_outline", "get_symbol_outline", "get_markdown_outline", "read_markdown_section", "list_files":
+	case "search_text", "read_symbol", "find_symbol", "get_file_outline", "get_symbol_outline", "get_markdown_outline", "read_markdown_section", "list_files":
 		return true
 	default:
 		return false
@@ -3590,6 +3552,10 @@ func isRepeatedExplorationGuardTool(name string) bool {
 
 func shouldBlockRepeatedSuccessfulExploration(toolName string, previousSuccesses int) bool {
 	return previousSuccesses >= 2 && isRepeatedExplorationGuardTool(toolName)
+}
+
+func skipIdenticalToolCallWatchdog(toolName string) bool {
+	return toolName == "read_file"
 }
 
 func repeatedSuccessfulExplorationBlockMessage(toolName string, argsJSON []byte, previousSuccesses int) string {

@@ -32,8 +32,8 @@ Adjust the number and content of TODO items to the task.
 - If the user explicitly names target files, edit only those files by default.
 - For planning, design document, or migration policy tasks, do not write concrete implementation code unless the user explicitly asks for code.
 - For planning, design document, or migration policy tasks, focus on phases, impact scope, risks, decisions, validation strategy, and migration order.
-- For long Markdown documents, do not generate the whole document in one pass. Create a heading skeleton first, then append bounded sections.
-- When appending to a long Markdown document, use one write_file/edit_file/edit_with_pattern call for one chapter or small section.
+- For long Markdown documents, a single large edit is allowed when it is the clearest operation. Use bounded sections only when that improves accuracy.
+- When appending to a long Markdown document, write the largest coherent section that can be produced accurately.
 - If the user asks to add tests, first add tests that match the style of existing test files.
 - Change the implementation or prompt text under test only after the added test fails and confirms the necessary cause.
 - After the requested change and verification are complete, provide the final report without extra exploration.
@@ -41,7 +41,7 @@ Adjust the number and content of TODO items to the task.
 - Avoid repeatedly reading the same symbol or file. Once enough information is available, edit or report.
 - Do not call read_symbol many times in one response. Read at most three necessary methods, then decide from those results whether another response needs more.
 - For investigation or verification tasks, once relevant methods have been read, move to a conclusion or the smallest edit instead of exhaustively reading surrounding methods.
-- If a large edit or omitted tool argument is rejected, do not infer current file state from the omitted preview or prior intent. Before the next edit or final report, prefer read_symbol/get_file_outline/get_symbol_outline, or use a narrow read_file range for unsupported files.
+- If an omitted tool argument is rejected, do not infer current file state from the omitted preview or prior intent. Before the next edit or final report, prefer read_symbol/get_file_outline/get_symbol_outline, or use a narrow read_file range for unsupported files.
 
 # Progress Display
 

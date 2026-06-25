@@ -179,8 +179,7 @@ func TestWriteFileTooLarge(t *testing.T) {
 
 	tool := NewWriteFileTool(tmpDir)
 
-	// 11MB の内容
-	largeContent := string(make([]byte, 11*1024*1024))
+	largeContent := string(make([]byte, WriteFileMaxSize+1))
 	args, _ := json.Marshal(writeFileArgs{
 		Path:    "huge.txt",
 		Content: largeContent,

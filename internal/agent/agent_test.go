@@ -2662,6 +2662,74 @@ func TestAgentBlocksThirdRepeatedSuccessfulSearchBeforeWatchdogStop(t *testing.T
 	}
 }
 
+func TestRepeatedSuccessfulSearchBlocksDoNotEscalateAsToolFailures(t *testing.T) {
+	repeatedSearch := testToolCallWithArgs("search_text", map[string]interface{}{
+		"pattern": "class.*Trainer",
+	})
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedSearch}}},
+			{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedSearch}}},
+			{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedSearch}}},
+			{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedSearch}}},
+			{Message: llm.Message{Role: "assistant", Content: "Recovered from repeated search."}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	searchTool := &dummyTool{name: "search_text", response: "large trainer search result"}
+	registry.Register(searchTool)
+	agentInst := New(mockLLM, registry)
+
+	resp, err := agentInst.RunWithOptions(context.Background(), nil, "continue migration", RunOptions{MaxIterations: 8})
+	if err != nil {
+		t.Fatalf("RunWithOptions error = %v", err)
+	}
+	if resp.WatchdogStop != nil {
+		t.Fatalf("WatchdogStop = %#v, want nil", resp.WatchdogStop)
+	}
+	if resp.FinalContent != "Recovered from repeated search." {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+	if searchTool.calls != 2 {
+		t.Fatalf("search_text calls = %d, want 2", searchTool.calls)
+	}
+}
+
+func TestRepeatedReadFileIsAllowedForCurrentStateRecovery(t *testing.T) {
+	repeatedRead := testToolCallWithArgs("read_file", map[string]interface{}{
+		"path":       "src/MAE_pytorch.py",
+		"start_line": 430,
+	})
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedRead}}},
+			{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedRead}}},
+			{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedRead}}},
+			{Message: llm.Message{Role: "assistant", Content: "Read current state."}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	readTool := &dummyTool{name: "read_file", response: "current lines around myCA"}
+	registry.Register(readTool)
+	agentInst := New(mockLLM, registry)
+
+	resp, err := agentInst.RunWithOptions(context.Background(), nil, "continue migration", RunOptions{MaxIterations: 6})
+	if err != nil {
+		t.Fatalf("RunWithOptions error = %v", err)
+	}
+	if resp.WatchdogStop != nil {
+		t.Fatalf("WatchdogStop = %#v, want nil", resp.WatchdogStop)
+	}
+	if readTool.calls != 3 {
+		t.Fatalf("read_file calls = %d, want 3", readTool.calls)
+	}
+	if resp.FinalContent != "Read current state." {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+}
+
 func TestEscalationMergesSystemMessagesForLLMRequest(t *testing.T) {
 	mockLLM := &mockLLM{
 		responses: []llm.ChatResponse{

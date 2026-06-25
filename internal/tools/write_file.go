@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	WriteFileMaxSize = 10 * 1024 * 1024 // 10MB
+	WriteFileMaxSize = 50 * 1024 * 1024 // 50MB
 )
 
 // WriteFileTool はファイルを書き込む

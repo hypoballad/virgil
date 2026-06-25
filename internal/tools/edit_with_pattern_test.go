@@ -187,6 +187,36 @@ func B() {}
 	}
 }
 
+func TestEditWithPattern_AllowsLargeReplacement(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "large.txt")
+	content := "before\nTARGET\n after\n"
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	tool := NewEditWithPatternTool(tmpDir)
+	largeReplacement := strings.Repeat("replacement line\n", 3000)
+	args, _ := json.Marshal(map[string]string{
+		"path":         "large.txt",
+		"find_text":    "TARGET\n",
+		"replace_with": largeReplacement,
+	})
+
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected large replacement to succeed, got: %s", result.Content)
+	}
+
+	newContent, _ := os.ReadFile(testFile)
+	if !strings.Contains(string(newContent), largeReplacement) {
+		t.Fatal("large replacement was not written")
+	}
+}
+
 func TestEditWithPattern_SyntaxValidation(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.go")

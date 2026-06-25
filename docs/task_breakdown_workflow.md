@@ -173,16 +173,15 @@ Good edit steps:
 
 Bad edit steps:
 
-- insert a 100+ line method in one edit
+- mix unrelated implementation areas in one edit
 - combine implementation and status updates
-- retry a rejected large payload
 - reuse an omitted or scrubbed tool argument
 
 ## VMAX Notes
 
 VMAX can be used with this manual workflow, but keep one explicit task per VMAX run.
 
-When VMAX large-edit safety rejects an edit, treat the rejection as a decomposition signal. Continue with a smaller fresh edit instead of stopping or retrying the same payload.
+Large edit payloads are allowed. If a tool rejects an omitted, scrubbed, or malformed payload, regenerate valid arguments from current source instead of retrying the same payload.
 
 ## Command Summary
 

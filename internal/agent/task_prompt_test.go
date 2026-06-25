@@ -15,8 +15,8 @@ func TestTaskTemplateSystemPromptContainsKeyInstructions(t *testing.T) {
 		"without extra exploration",
 		"After verification succeeds",
 		"do not write concrete implementation code",
-		"heading skeleton",
-		"append bounded sections",
+		"single large edit is allowed",
+		"largest coherent section",
 		"Waiting For User Confirmation",
 		"Do not stop after a declarative sentence",
 	}

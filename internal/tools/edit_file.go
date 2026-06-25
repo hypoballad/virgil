@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	EditFileMaxLines    = 10000 // 1ファイルあたりの最大行数
-	EditFileMaxNewLines = 1000  // 1回の編集で挿入できる最大行数
+	EditFileMaxLines    = 200000 // 1ファイルあたりの最大行数
+	EditFileMaxNewLines = 50000  // 1回の編集で挿入できる最大行数
 )
 
 type EditFileTool struct {
