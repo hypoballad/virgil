@@ -2622,6 +2622,57 @@ func TestAgentMaxIterations(t *testing.T) {
 	}
 }
 
+func TestEscalationToolOnlyResponseUsesTextFallbackMessage(t *testing.T) {
+	repeatedWrite := testToolCallWithArgs("write_file", map[string]interface{}{
+		"path":    "src/MAE_pytorch.py",
+		"content": "",
+	})
+	responses := []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedWrite}}},
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{repeatedWrite}}},
+		{
+			Message: llm.Message{
+				Role: "assistant",
+				ToolCalls: []llm.ToolCall{
+					testToolCallWithArgs("read_file", map[string]interface{}{
+						"path":       "src/MAE_pytorch.py",
+						"start_line": 630,
+					}),
+				},
+			},
+			FinishReason:     "tool_calls",
+			CompletionTokens: 65,
+		},
+	}
+
+	mockLLM := &mockLLM{responses: responses}
+	registry := tools.NewRegistry()
+	registry.Register(&dummyTool{name: "write_file", response: "refusing to overwrite existing file without explicit mode: src/MAE_pytorch.py", isError: true, isMutating: true})
+	registry.Register(&dummyTool{name: "read_file", response: "line 630"})
+	agentInst := New(mockLLM, registry)
+
+	resp, err := agentInst.RunWithOptions(context.Background(), nil, "continue migration", RunOptions{MaxIterations: 5})
+	if err != nil {
+		t.Fatalf("RunWithOptions error = %v", err)
+	}
+	if resp.WatchdogStop == nil {
+		t.Fatal("expected watchdog stop")
+	}
+	if resp.FinalContent == "" {
+		t.Fatal("expected non-empty final content fallback")
+	}
+	if !strings.Contains(resp.FinalContent, "Stopped by watchdog") {
+		t.Fatalf("unexpected final content: %q", resp.FinalContent)
+	}
+	last := resp.Messages[len(resp.Messages)-1]
+	if last.Content == "" {
+		t.Fatalf("last response message should contain fallback text, got %#v", last)
+	}
+	if len(last.ToolCalls) != 0 {
+		t.Fatalf("last response message should not retain escalation tool calls: %#v", last.ToolCalls)
+	}
+}
+
 func TestAgentBlocksThirdRepeatedSuccessfulSearchBeforeWatchdogStop(t *testing.T) {
 	repeatedSearch := testToolCallWithArgs("search_text", map[string]interface{}{
 		"pattern": "class.*Trainer",

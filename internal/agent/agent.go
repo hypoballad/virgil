@@ -2561,13 +2561,17 @@ func (a *Agent) escalate(ctx context.Context, messages []llm.Message, response *
 	if content == "" {
 		content = fmt.Sprintf("Stopped by watchdog: %s (%s)", signal.Reason, signal.Detail)
 	}
+	finalMessage := llm.Message{
+		Role:    "assistant",
+		Content: content,
+	}
 	response.Structured = &StructuredResponse{
 		Summary:         summarizeForMetadata(content, 100),
 		Confidence:      ConfidenceMedium,
 		RequestedAction: inferActionFromText(content),
 	}
 	response.FinalContent = content
-	response.Messages = append(messages, finalResp.Message)
+	response.Messages = append(messages, finalMessage)
 	response.WatchdogStop = signal
 	return response, nil
 }
