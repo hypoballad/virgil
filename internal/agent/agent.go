@@ -1062,6 +1062,16 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				response.Messages = messages
 				continue
 			}
+			if shouldBlockIntentOnlyFinal(userInput, content, response.ToolCalls) {
+				log.Printf("agent: intent-only final response blocked; prompting model to continue with tools")
+				messages = append(messages, chatResp.Message)
+				messages = append(messages, llm.Message{
+					Role:    "user",
+					Content: intentOnlyFinalRecoveryPrompt(),
+				})
+				response.Messages = messages
+				continue
+			}
 
 			// 自由文応答をそのまま使う（2パス目は廃止）
 			// メタデータはヒューリスティック判定で生成
@@ -1551,6 +1561,82 @@ func hasSuccessfulFileMutation(records []ToolCallRecord) bool {
 		}
 	}
 	return false
+}
+
+func hasSuccessfulMutationOrVerification(records []ToolCallRecord) bool {
+	for _, record := range records {
+		if record.Error != nil || record.Result == nil || record.Result.IsError {
+			continue
+		}
+		switch record.ToolName {
+		case "write_file", "edit_file", "edit_with_pattern",
+			"check_python_syntax", "check_go_package", "check_javascript_syntax", "check_typescript",
+			"run_tests":
+			return true
+		}
+	}
+	return false
+}
+
+func shouldBlockIntentOnlyFinal(userInput, content string, records []ToolCallRecord) bool {
+	if hasSuccessfulMutationOrVerification(records) {
+		return false
+	}
+	if !userRequestsImplementation(userInput) {
+		return false
+	}
+	if inferActionFromText(content) == ActionAskUser {
+		return false
+	}
+	return isIntentOnlyFinalResponse(content)
+}
+
+func userRequestsImplementation(input string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(input))
+	if normalized == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"実装", "修正", "変更", "追加", "削除", "置換", "更新", "適用", "直して", "なおして",
+		"implement", "fix", "change", "modify", "edit", "add", "remove", "delete", "update", "apply",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isIntentOnlyFinalResponse(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return false
+	}
+	runes := []rune(trimmed)
+	if len(runes) > 180 {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	intentMarkers := []string{
+		"実装します", "修正します", "変更します", "追加します", "更新します", "対応します",
+		"確認します", "調べます", "着手します", "進めます", "行います",
+		"i will implement", "i'll implement", "i will fix", "i'll fix", "i will update",
+		"i'll update", "i will check", "i'll check", "let me check", "let me implement",
+		"let me fix", "now let me", "i'll proceed",
+	}
+	for _, marker := range intentMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func intentOnlyFinalRecoveryPrompt() string {
+	return "You stopped after only declaring intent. Do not provide the final answer yet.\n" +
+		"Continue the user's implementation request now by calling the next necessary tool.\n" +
+		"If a previous lookup failed, use another available inspection tool such as find_symbol, search_text, get_file_outline, or a narrow read_file range to locate the current target.\n" +
+		"After making the required change, run the appropriate syntax check or verification tool, update any requested status file, and only then finish with a concise result."
 }
 
 func isVMaxRunOptions(opts RunOptions) bool {
@@ -2714,6 +2800,7 @@ type toolResultMessageInfo struct {
 func prepareMessagesForLLMRequest(messages []llm.Message) []llm.Message {
 	prepared := compactToolResultMessages(messages)
 	prepared = compactToolCallArguments(prepared)
+	prepared = compactEmptyResponseRecoveryPrompts(prepared)
 	prepared = dropEmptyAssistantMessages(prepared)
 	prepared = mergeSystemMessagesForLLMRequest(prepared)
 	return prepared
@@ -2775,6 +2862,38 @@ func dropEmptyAssistantMessages(messages []llm.Message) []llm.Message {
 		return messages
 	}
 	return out
+}
+
+func compactEmptyResponseRecoveryPrompts(messages []llm.Message) []llm.Message {
+	lastRecovery := -1
+	count := 0
+	for i, msg := range messages {
+		if isEmptyResponseRecoveryMessage(msg) {
+			lastRecovery = i
+			count++
+		}
+	}
+	if count <= 1 {
+		return messages
+	}
+
+	out := make([]llm.Message, 0, len(messages)-count+1)
+	for i, msg := range messages {
+		if isEmptyResponseRecoveryMessage(msg) && i != lastRecovery {
+			continue
+		}
+		out = append(out, msg)
+	}
+	return out
+}
+
+func isEmptyResponseRecoveryMessage(msg llm.Message) bool {
+	if msg.Role != "user" {
+		return false
+	}
+	content := strings.TrimSpace(msg.Content)
+	return strings.HasPrefix(content, "Your previous response was empty. Continue the task now.") &&
+		strings.Contains(content, "Do not return an empty response.")
 }
 
 func compactToolCallArguments(messages []llm.Message) []llm.Message {

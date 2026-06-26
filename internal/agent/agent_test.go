@@ -1003,6 +1003,61 @@ func TestRunTaskRequiresSavedArtifactWhenRequested(t *testing.T) {
 	}
 }
 
+func TestRunBlocksIntentOnlyFinalDuringImplementationRequest(t *testing.T) {
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						testToolCallWithArgs("find_symbol", map[string]interface{}{
+							"name": "MAE_test",
+						}),
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "実装します。"}},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						testToolCallWithArgs("search_text", map[string]interface{}{
+							"pattern": "class MAE",
+						}),
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "完了しました。"}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	findTool := &dummyTool{name: "find_symbol", response: "Symbol not found", isError: true}
+	searchTool := &dummyTool{name: "search_text", response: "found class MAE_test"}
+	registry.Register(findTool)
+	registry.Register(searchTool)
+	agent := New(mockLLM, registry)
+
+	resp, err := agent.Run(context.Background(), nil, "未実装のものを実装してください")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.FinalContent != "完了しました。" {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+	if mockLLM.callCount != 4 {
+		t.Fatalf("LLM calls = %d, want 4", mockLLM.callCount)
+	}
+	if searchTool.calls != 1 {
+		t.Fatalf("search_text calls = %d, want 1", searchTool.calls)
+	}
+
+	joined := joinMessageContent(mockLLM.requests[2].Messages)
+	if !strings.Contains(joined, "only declaring intent") {
+		t.Fatalf("third request missing intent-only recovery prompt:\n%s", joined)
+	}
+}
+
 func TestTaskRequiresSavedArtifact(t *testing.T) {
 	if !taskRequiresSavedArtifact("プランは計画書としてtrain/.virgil/plan 配下に名前をつけて保存してください") {
 		t.Fatal("expected saved artifact requirement")
@@ -1914,6 +1969,42 @@ func TestPrepareMessagesMergesSystemMessagesAtStart(t *testing.T) {
 		}
 	}
 	if messages[3].Role != "system" || messages[3].Content != "slash command status" {
+		t.Fatalf("prepareMessagesForLLMRequest mutated original messages")
+	}
+}
+
+func TestPrepareMessagesKeepsOnlyLatestEmptyResponseRecoveryPrompt(t *testing.T) {
+	recovery := emptyResponseRecoveryPrompt()
+	messages := []llm.Message{
+		{Role: "system", Content: "sys"},
+		{Role: "user", Content: "実装してください"},
+		{Role: "user", Content: recovery},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{testToolCall("read_file")}},
+		{Role: "tool", ToolCallID: "call_1", Content: "read result"},
+		{Role: "user", Content: recovery},
+		{Role: "user", Content: "タスクを続けてください"},
+		{Role: "user", Content: recovery},
+	}
+
+	prepared := prepareMessagesForLLMRequest(messages)
+	recoveryCount := 0
+	var contents []string
+	for _, msg := range prepared {
+		if msg.Role == "user" {
+			contents = append(contents, msg.Content)
+		}
+		if isEmptyResponseRecoveryMessage(msg) {
+			recoveryCount++
+		}
+	}
+	if recoveryCount != 1 {
+		t.Fatalf("recovery prompt count = %d, want 1: %#v", recoveryCount, prepared)
+	}
+	joined := strings.Join(contents, "\n---\n")
+	if !strings.Contains(joined, "実装してください") || !strings.Contains(joined, "タスクを続けてください") {
+		t.Fatalf("non-recovery user instructions were dropped:\n%s", joined)
+	}
+	if messages[2].Content != recovery {
 		t.Fatalf("prepareMessagesForLLMRequest mutated original messages")
 	}
 }
