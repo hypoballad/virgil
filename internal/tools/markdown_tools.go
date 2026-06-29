@@ -341,7 +341,7 @@ func markdownSectionRange(args readMarkdownSectionArgs, headings []markdownHeadi
 				return h.StartLine, h.EndLine, fmt.Sprintf("heading %q", h.Title), nil
 			}
 		}
-		return 0, 0, "", fmt.Errorf("heading %q not found", args.Heading)
+		return 0, 0, "", fmt.Errorf("heading %q not found\n%s", args.Heading, formatAvailableMarkdownHeadings(headings, 12))
 	}
 
 	startLine := args.StartLine
@@ -359,6 +359,26 @@ func markdownSectionRange(args readMarkdownSectionArgs, headings []markdownHeadi
 		return 0, 0, "", fmt.Errorf("end_line %d is before start_line %d", endLine, startLine)
 	}
 	return startLine, endLine, "", nil
+}
+
+func formatAvailableMarkdownHeadings(headings []markdownHeading, limit int) string {
+	if len(headings) == 0 {
+		return "Available headings: none. Use read_markdown_section with start_line/end_line."
+	}
+	if limit <= 0 || limit > len(headings) {
+		limit = len(headings)
+	}
+	var sb strings.Builder
+	sb.WriteString("Available headings:\n")
+	for i := 0; i < limit; i++ {
+		h := headings[i]
+		sb.WriteString(fmt.Sprintf("- %s (lines %d-%d)\n", h.Title, h.StartLine, h.EndLine))
+	}
+	if len(headings) > limit {
+		sb.WriteString(fmt.Sprintf("- ... %d more headings omitted; use get_markdown_outline for the full list.\n", len(headings)-limit))
+	}
+	sb.WriteString("Use one of these exact headings or read_markdown_section with start_line/end_line.")
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 func markdownSectionOriginalEnd(args readMarkdownSectionArgs, headings []markdownHeading, lineCount int) int {

@@ -1111,6 +1111,116 @@ func TestAgentSingleToolCall(t *testing.T) {
 	}
 }
 
+func TestAgentBlocksRepeatedMarkdownFullReadAfterRecovery(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "plan.md"), []byte(strings.Join([]string{
+		"# Plan",
+		"",
+		"## Resume",
+		"next step",
+	}, "\n")), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_read_1",
+							Function: llm.FunctionCall{
+								Name:      "read_file",
+								Arguments: map[string]interface{}{"path": "plan.md"},
+							},
+						},
+					},
+				},
+			},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_section_1",
+							Function: llm.FunctionCall{
+								Name:      "read_markdown_section",
+								Arguments: map[string]interface{}{"path": "plan.md", "heading": "Resume"},
+							},
+						},
+					},
+				},
+			},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_read_2",
+							Function: llm.FunctionCall{
+								Name:      "read_file",
+								Arguments: map[string]interface{}{"path": "plan.md"},
+							},
+						},
+					},
+				},
+			},
+			{
+				Message: llm.Message{
+					Role: "assistant",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID: "call_section_2",
+							Function: llm.FunctionCall{
+								Name:      "read_markdown_section",
+								Arguments: map[string]interface{}{"path": "plan.md", "start_line": 1, "end_line": 4},
+							},
+						},
+					},
+				},
+			},
+			{Message: llm.Message{Role: "assistant", Content: "Done!"}},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	registry.Register(tools.NewReadFileTool(root))
+	registry.Register(tools.NewReadMarkdownSectionTool(root))
+	registry.Register(tools.NewGetMarkdownOutlineTool(root))
+
+	agent := New(mockLLM, registry)
+	resp, err := agent.Run(context.Background(), nil, "update plan")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.WatchdogStop != nil {
+		t.Fatalf("unexpected watchdog stop: %#v", resp.WatchdogStop)
+	}
+	if resp.FinalContent != "Done!" {
+		t.Fatalf("FinalContent = %q", resp.FinalContent)
+	}
+	if len(resp.ToolCalls) != 4 {
+		t.Fatalf("tool call records = %d, want 4", len(resp.ToolCalls))
+	}
+	secondRead := resp.ToolCalls[2]
+	if secondRead.ToolName != "read_file" {
+		t.Fatalf("third tool call = %q, want read_file", secondRead.ToolName)
+	}
+	if secondRead.Result == nil || !secondRead.Result.IsError {
+		t.Fatalf("second read result = %#v, want IsError=true", secondRead.Result)
+	}
+	if !strings.Contains(secondRead.Result.Content, "already refused in this run") {
+		t.Fatalf("second read was not blocked with repeated-refusal guidance:\n%s", secondRead.Result.Content)
+	}
+	if len(mockLLM.requests) < 4 {
+		t.Fatalf("LLM requests = %d, want at least 4", len(mockLLM.requests))
+	}
+	if got := len(mockLLM.requests[3].Tools); got != 2 {
+		t.Fatalf("request after repeated full read passed %d tools, want markdown recovery tools only", got)
+	}
+}
+
 func TestInlineToolCallMarkupIsExecuted(t *testing.T) {
 	mockLLM := &mockLLM{
 		responses: []llm.ChatResponse{

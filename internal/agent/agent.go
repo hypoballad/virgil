@@ -870,6 +870,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 	semanticSafetyFailures := map[string]int{}
 	successfulExplorationCalls := map[string]int{}
 	failedExplorationCalls := map[string]int{}
+	refusedMarkdownFullReads := map[string]bool{}
 	structuralRecovery := structuralReadRecovery{}
 	markdownRecovery := markdownReadRecovery{}
 	unavailableTools := map[string]bool{}
@@ -1150,6 +1151,28 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				ToolCallID: tc.ID,
 				ToolName:   tc.Function.Name,
 				Arguments:  argsJSON,
+			}
+
+			if path, ok := repeatedMarkdownFullRead(tc.Function.Name, argsJSON, refusedMarkdownFullReads); ok {
+				blockMsg := repeatedMarkdownFullReadBlockMessage(path)
+				log.Printf("agent: %s", blockMsg)
+				markdownRecovery.Require(path)
+				record.Result = &tools.Result{
+					IsError: true,
+					Content: blockMsg,
+				}
+				record.Error = nil
+				response.ToolCalls = append(response.ToolCalls, record)
+				messages = append(messages, llm.Message{
+					Role:       "tool",
+					Content:    blockMsg,
+					ToolCallID: tc.ID,
+				})
+				a.emitProgress(ProgressEvent{
+					Type:            EventAgentActivity,
+					ActivityMessage: fmt.Sprintf("Warning: ⚠️ %s repeated Markdown full read blocked", tc.Function.Name),
+				})
+				continue
 			}
 
 			if verificationSucceeded && isExploratoryTool(tc.Function.Name) {
@@ -1455,6 +1478,9 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 					failedExplorationCalls[callHash(tc.Function.Name, argsJSON)]++
 				}
 				if path, ok := markdownFullReadRefusal(resultContent, tc.Function.Name, argsJSON); ok {
+					if path != "" {
+						refusedMarkdownFullReads[path] = true
+					}
 					markdownRecovery.Require(path)
 					log.Printf("agent: markdown read recovery required for %s", path)
 				}
@@ -1811,6 +1837,38 @@ func markdownFullReadRefusal(resultContent string, toolName string, argsJSON []b
 		return args.Path, false
 	}
 	return args.Path, true
+}
+
+func repeatedMarkdownFullRead(toolName string, argsJSON []byte, refused map[string]bool) (string, bool) {
+	if toolName != "read_file" || len(refused) == 0 {
+		return "", false
+	}
+	var args struct {
+		Path      string `json:"path"`
+		StartLine int    `json:"start_line"`
+		EndLine   int    `json:"end_line"`
+	}
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		return "", false
+	}
+	if strings.TrimSpace(args.Path) == "" || args.StartLine > 0 || args.EndLine > 0 {
+		return "", false
+	}
+	if !refused[args.Path] {
+		return "", false
+	}
+	return args.Path, true
+}
+
+func repeatedMarkdownFullReadBlockMessage(path string) string {
+	return fmt.Sprintf(
+		"Tool \"read_file\" blocked: a full Markdown read for %q was already refused in this run. "+
+			"Do not repeat read_file with only path. Use get_markdown_outline(path=%q), "+
+			"read_markdown_section(path=%q, heading=\"EXACT_HEADING\"), "+
+			"read_markdown_section(path=%q, start_line=START_LINE, end_line=END_LINE), "+
+			"or read_file(path=%q, start_line=START_LINE, end_line=END_LINE).",
+		path, path, path, path, path,
+	)
 }
 
 func editPatternNotFound(resultContent string, toolName string, argsJSON []byte) (string, bool) {

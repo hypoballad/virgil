@@ -75,6 +75,41 @@ func TestReadMarkdownSectionToolByHeading(t *testing.T) {
 	}
 }
 
+func TestReadMarkdownSectionToolHeadingNotFoundListsAvailableHeadings(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "plan.md"), strings.Join([]string{
+		"# Plan",
+		"intro",
+		"## Phase 1",
+		"details",
+		"## Phase 2",
+		"later",
+	}, "\n"))
+
+	tool := NewReadMarkdownSectionTool(root)
+	result, err := tool.Execute(context.Background(), mustJSONArgs(t, map[string]interface{}{
+		"path":    "plan.md",
+		"heading": "Missing",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error result, got: %s", result.Content)
+	}
+	for _, want := range []string{
+		`heading "Missing" not found`,
+		"Available headings:",
+		"Plan (lines 1-6)",
+		"Phase 1 (lines 3-4)",
+		"Use one of these exact headings",
+	} {
+		if !strings.Contains(result.Content, want) {
+			t.Fatalf("error missing %q:\n%s", want, result.Content)
+		}
+	}
+}
+
 func TestReadMarkdownSectionToolTruncatesMaxLines(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "notes.md"), strings.Join([]string{
