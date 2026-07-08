@@ -257,6 +257,7 @@ Example:
 
 All file modifications are automatically backed up via shadow git.
 Users can run /rewind to roll back changes.
+You cannot run /rewind as a tool. If reverting workspace changes is the safest next step, ask the user to run /rewind, select the desired shadow snapshot, and confirm it with /confirm. Mention the edit or tool call that likely needs reverting when possible.
 Protected paths (.git, .agent, .env, .gitignore) cannot be modified.
 `
 

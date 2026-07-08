@@ -1767,6 +1767,22 @@ func TestSystemPromptMentionsTargetedEditPolicy(t *testing.T) {
 	}
 }
 
+func TestSystemPromptAsksUserForRewindWhenRollbackIsNeeded(t *testing.T) {
+	agent := New(&mockLLM{}, tools.NewRegistry())
+	prompt := agent.buildSystemPrompt()
+	for _, want := range []string{
+		"You cannot run /rewind as a tool",
+		"ask the user to run /rewind",
+		"select the desired shadow snapshot",
+		"confirm it with /confirm",
+		"edit or tool call that likely needs reverting",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("system prompt missing %q", want)
+		}
+	}
+}
+
 func TestLimitToolCallsLimitsMutatingTools(t *testing.T) {
 	registry := tools.NewRegistry()
 	registry.Register(&dummyTool{name: "write_tool", response: "ok", isMutating: true})
