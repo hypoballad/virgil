@@ -37,6 +37,8 @@ const (
 
 const summaryInputMaxChars = 30000
 const preflightShrinkRecentMessages = 8
+const preflightShrinkMaxPinnedUserMessages = 8
+const preflightShrinkMaxPinnedUserChars = 1200
 
 const (
 	maxSemanticSafetyFailuresPerRun = 2
@@ -545,14 +547,73 @@ func pinUserMessagesForPreflightShrink(messages []llm.Message) (summarizable []l
 		return nil, nil
 	}
 	summarizable = make([]llm.Message, 0, len(messages))
-	for _, msg := range messages {
-		if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
+	pinnedSet := make(map[int]bool, preflightShrinkMaxPinnedUserMessages)
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if shouldPinUserMessageForPreflightShrink(msg, len(pinnedSet), preflightShrinkMaxPinnedUserMessages, preflightShrinkMaxPinnedUserChars) {
+			pinnedSet[i] = true
+		}
+	}
+	for i, msg := range messages {
+		if pinnedSet[i] {
 			pinned = append(pinned, msg)
 			continue
 		}
 		summarizable = append(summarizable, msg)
 	}
 	return summarizable, pinned
+}
+
+func shouldPinUserMessageForPreflightShrink(msg llm.Message, pinnedCount int, maxPinned int, maxChars int) bool {
+	if msg.Role != "user" || pinnedCount >= maxPinned {
+		return false
+	}
+	content := strings.TrimSpace(msg.Content)
+	if content == "" || isDebugContextLikeMessage(content) {
+		return false
+	}
+	if maxChars > 0 && len([]rune(content)) > maxChars {
+		return false
+	}
+	return looksLikeDurableUserInstruction(content)
+}
+
+func isDebugContextLikeMessage(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	return strings.Contains(trimmed, "<debug_context>") ||
+		strings.Contains(trimmed, "source: vscode-debugpy") ||
+		strings.Contains(trimmed, "current_frame:")
+}
+
+func looksLikeDurableUserInstruction(content string) bool {
+	lower := strings.ToLower(content)
+	markers := []string{
+		"必ず",
+		"絶対",
+		"覚えて",
+		"忘れ",
+		"制約",
+		"ルール",
+		"以後",
+		"今後",
+		"してください",
+		"しないで",
+		"must",
+		"always",
+		"never",
+		"remember",
+		"constraint",
+		"rule",
+		"do not",
+		"don't",
+		"from now on",
+	}
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsPlanMode は現在プランモードかを返す

@@ -514,6 +514,52 @@ func TestPreflightShrinkPinsOlderUserInstructions(t *testing.T) {
 	}
 }
 
+func TestPreflightShrinkSummarizesOlderDebugContext(t *testing.T) {
+	debugContext := "<debug_context>\nsource: vscode-debugpy\ncurrent_frame:\n  file: train.py\n</debug_context>"
+	history := []llm.Message{
+		{Role: "user", Content: debugContext},
+	}
+	for i := 0; i < 12; i++ {
+		history = append(history, llm.Message{
+			Role:    "assistant",
+			Content: fmt.Sprintf("work-%02d %s", i, strings.Repeat("context ", 100)),
+		})
+	}
+
+	mockLLM := &mockLLM{
+		responses: []llm.ChatResponse{
+			{Message: llm.Message{Role: "assistant", Content: "compressed debug context and assistant work"}},
+			{Message: llm.Message{Role: "assistant", Content: "done"}},
+		},
+	}
+	agentInst := New(mockLLM, tools.NewRegistry())
+
+	resp, err := agentInst.RunWithOptions(context.Background(), history, "continue task", RunOptions{
+		PreflightShrink:                   true,
+		ContextLimitTokens:                100,
+		PreflightShrinkPercent:            1,
+		PreflightShrinkCooldownIterations: 5,
+	})
+	if err != nil {
+		t.Fatalf("RunWithOptions error = %v", err)
+	}
+	if resp.FinalContent != "done" {
+		t.Fatalf("FinalContent = %q, want done", resp.FinalContent)
+	}
+
+	summaryInput := joinMessageContent(mockLLM.requests[0].Messages)
+	if !strings.Contains(summaryInput, debugContext) {
+		t.Fatalf("debug context should be summarized, not pinned away:\n%s", summaryInput)
+	}
+	chatInput := joinMessageContent(mockLLM.requests[1].Messages)
+	if strings.Contains(chatInput, debugContext) {
+		t.Fatalf("compressed request retained raw debug context:\n%s", chatInput)
+	}
+	if !strings.Contains(chatInput, "compressed debug context and assistant work") {
+		t.Fatalf("compressed request missing summary:\n%s", chatInput)
+	}
+}
+
 func TestSplitMessagesForPreflightShrinkKeepsToolPair(t *testing.T) {
 	messages := []llm.Message{
 		{Role: "system", Content: "system"},

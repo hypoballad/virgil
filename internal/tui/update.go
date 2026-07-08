@@ -1634,6 +1634,8 @@ func (m *Model) showRewindHistory() tea.Cmd {
 const (
 	shrinkRecentMessages        = 6
 	shrinkMaxMessagesToInput    = 24
+	shrinkMaxPinnedUserMessages = 8
+	shrinkMaxPinnedUserChars    = 1200
 	autoShrinkInfoPercent       = 30
 	autoShrinkTriggerPercent    = 50
 	autoShrinkMessageMinPercent = 30
@@ -1820,14 +1822,73 @@ func pinUserMessagesForShrink(messages []llm.Message) (summarizable []llm.Messag
 		return nil, nil
 	}
 	summarizable = make([]llm.Message, 0, len(messages))
-	for _, msg := range messages {
-		if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
+	pinnedSet := make(map[int]bool, shrinkMaxPinnedUserMessages)
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if shouldPinUserMessageForShrink(msg, len(pinnedSet), shrinkMaxPinnedUserMessages, shrinkMaxPinnedUserChars) {
+			pinnedSet[i] = true
+		}
+	}
+	for i, msg := range messages {
+		if pinnedSet[i] {
 			pinned = append(pinned, msg)
 			continue
 		}
 		summarizable = append(summarizable, msg)
 	}
 	return summarizable, pinned
+}
+
+func shouldPinUserMessageForShrink(msg llm.Message, pinnedCount int, maxPinned int, maxChars int) bool {
+	if msg.Role != "user" || pinnedCount >= maxPinned {
+		return false
+	}
+	content := strings.TrimSpace(msg.Content)
+	if content == "" || isDebugContextLikeMessage(content) {
+		return false
+	}
+	if maxChars > 0 && len([]rune(content)) > maxChars {
+		return false
+	}
+	return looksLikeDurableUserInstruction(content)
+}
+
+func isDebugContextLikeMessage(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	return strings.Contains(trimmed, "<debug_context>") ||
+		strings.Contains(trimmed, "source: vscode-debugpy") ||
+		strings.Contains(trimmed, "current_frame:")
+}
+
+func looksLikeDurableUserInstruction(content string) bool {
+	lower := strings.ToLower(content)
+	markers := []string{
+		"必ず",
+		"絶対",
+		"覚えて",
+		"忘れ",
+		"制約",
+		"ルール",
+		"以後",
+		"今後",
+		"してください",
+		"しないで",
+		"must",
+		"always",
+		"never",
+		"remember",
+		"constraint",
+		"rule",
+		"do not",
+		"don't",
+		"from now on",
+	}
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildCompressedHistory(base []llm.Message, summary string, pinned []llm.Message, recent []llm.Message) []llm.Message {
@@ -1976,6 +2037,7 @@ func (m *Model) callBtw(ctx context.Context, question string) tea.Cmd {
 func (m *Model) callTask(ctx context.Context, description string, opts agent.RunOptions) tea.Cmd {
 	turnID := m.currentTurnID
 	history := m.historyWithSessionMemory()
+	opts = m.runOptionsWithPreflightDefaults(opts)
 	return func() tea.Msg {
 		m.agent.SetCurrentTurnID(turnID)
 		resp, err := m.agent.RunTaskWithOptions(ctx, history, description, opts)
@@ -1990,6 +2052,7 @@ func (m *Model) callTask(ctx context.Context, description string, opts agent.Run
 func (m *Model) callAgent(ctx context.Context, userInput string, opts agent.RunOptions) tea.Cmd {
 	turnID := m.currentTurnID // クロージャでキャプチャ
 	history := m.historyWithSessionMemory()
+	opts = m.runOptionsWithPreflightDefaults(opts)
 	return func() tea.Msg {
 		m.agent.SetCurrentTurnID(turnID)
 		resp, err := m.agent.RunWithOptions(ctx, history, userInput, opts)
@@ -1998,6 +2061,23 @@ func (m *Model) callAgent(ctx context.Context, userInput string, opts agent.RunO
 			err:      err,
 		}
 	}
+}
+
+func (m Model) runOptionsWithPreflightDefaults(opts agent.RunOptions) agent.RunOptions {
+	if m.contextLimit <= 0 {
+		return opts
+	}
+	opts.PreflightShrink = true
+	if opts.ContextLimitTokens <= 0 {
+		opts.ContextLimitTokens = m.contextLimit
+	}
+	if opts.PreflightShrinkPercent <= 0 {
+		opts.PreflightShrinkPercent = 45
+	}
+	if opts.PreflightShrinkCooldownIterations <= 0 {
+		opts.PreflightShrinkCooldownIterations = 5
+	}
+	return opts
 }
 
 func (m Model) debugContextPath() string {

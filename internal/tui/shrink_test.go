@@ -137,6 +137,34 @@ func TestPinUserMessagesForShrinkExcludesUserInstructionsFromSummary(t *testing.
 	}
 }
 
+func TestPinUserMessagesForShrinkSummarizesDebugContext(t *testing.T) {
+	debugContext := "<debug_context>\nsource: vscode-debugpy\ncurrent_frame:\n  file: train.py\n</debug_context>"
+	summarizable, pinned := pinUserMessagesForShrink([]llm.Message{
+		{Role: "user", Content: debugContext},
+		{Role: "assistant", Content: "old work"},
+	})
+	if len(pinned) != 0 {
+		t.Fatalf("debug context should not be pinned raw: %#v", pinned)
+	}
+	if len(summarizable) != 2 {
+		t.Fatalf("summarizable len = %d, want 2: %#v", len(summarizable), summarizable)
+	}
+	if summarizable[0].Content != debugContext {
+		t.Fatalf("debug context should be summarized, got %#v", summarizable)
+	}
+}
+
+func TestPinUserMessagesForShrinkCapsPinnedInstructions(t *testing.T) {
+	messages := make([]llm.Message, 0, shrinkMaxPinnedUserMessages+2)
+	for i := 0; i < shrinkMaxPinnedUserMessages+2; i++ {
+		messages = append(messages, llm.Message{Role: "user", Content: "必ず守ってください"})
+	}
+	_, pinned := pinUserMessagesForShrink(messages)
+	if len(pinned) != shrinkMaxPinnedUserMessages {
+		t.Fatalf("pinned len = %d, want %d", len(pinned), shrinkMaxPinnedUserMessages)
+	}
+}
+
 func TestShrinkCompleteUpdatesCurrentTokens(t *testing.T) {
 	agentInst := agent.New(nil, tools.NewRegistry())
 	model := NewModel(agentInst, nil, nil, nil, "session", "/tmp/workspace", "model", "", 12000, 5, 30)

@@ -41,6 +41,43 @@ func TestVMaxConsumeRunOptionsOneShot(t *testing.T) {
 	}
 }
 
+func TestRunOptionsWithPreflightDefaultsEnablesNormalPreflight(t *testing.T) {
+	m := Model{contextLimit: 76000}
+	opts := m.runOptionsWithPreflightDefaults(agent.RunOptions{})
+
+	if !opts.PreflightShrink {
+		t.Fatal("normal run should use preflight shrink")
+	}
+	if opts.ContextLimitTokens != 76000 {
+		t.Fatalf("ContextLimitTokens = %d, want 76000", opts.ContextLimitTokens)
+	}
+	if opts.PreflightShrinkPercent != 45 {
+		t.Fatalf("PreflightShrinkPercent = %d, want 45", opts.PreflightShrinkPercent)
+	}
+	if opts.PreflightShrinkCooldownIterations != 5 {
+		t.Fatalf("PreflightShrinkCooldownIterations = %d, want 5", opts.PreflightShrinkCooldownIterations)
+	}
+}
+
+func TestRunOptionsWithPreflightDefaultsPreservesExplicitValues(t *testing.T) {
+	m := Model{contextLimit: 76000}
+	opts := m.runOptionsWithPreflightDefaults(agent.RunOptions{
+		MaxIterations:                     agent.VMaxIterations,
+		AutoConfirmRunCommand:             true,
+		PreflightShrink:                   true,
+		ContextLimitTokens:                80000,
+		PreflightShrinkPercent:            40,
+		PreflightShrinkCooldownIterations: 3,
+	})
+
+	if opts.ContextLimitTokens != 80000 || opts.PreflightShrinkPercent != 40 || opts.PreflightShrinkCooldownIterations != 3 {
+		t.Fatalf("explicit preflight values should be preserved, got %#v", opts)
+	}
+	if opts.MaxIterations != agent.VMaxIterations || !opts.AutoConfirmRunCommand {
+		t.Fatalf("non-preflight options changed: %#v", opts)
+	}
+}
+
 func TestVMaxUnavailableDoesNotArmOptions(t *testing.T) {
 	m := Model{vmaxAvailable: false, vmaxArmed: true}
 	opts := m.consumeVMaxRunOptions()
