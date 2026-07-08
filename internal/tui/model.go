@@ -40,6 +40,8 @@ var coreSlashCommands = []string{
 	"/reindex",
 	"/shrink",
 	"/history",
+	"/remember",
+	"/forget",
 	"/clear",
 	"/debug-context",
 	"/vmax",
@@ -72,6 +74,8 @@ var allSlashCommands = []string{
 	"/shrink",
 	"/history",
 	"/last",
+	"/remember",
+	"/forget",
 	"/btw",
 	"/help",
 }
@@ -117,6 +121,7 @@ type Model struct {
 	fullPowerCommands         bool
 	planMode                  bool // 追加: プランモード状態
 	debugContext              *debugctx.Context
+	sessionMemory             []string
 	vmaxAvailable             bool
 	vmaxArmed                 bool
 	vmaxActive                bool

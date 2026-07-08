@@ -171,7 +171,7 @@ func TestSlashCommandHelpIsFilteredByDefault(t *testing.T) {
 	m := testModel()
 	help := m.slashCommandHelp()
 
-	for _, want := range []string{"/rewind", "/task <task>", "/tasks <path>", "/do <id>", "/breakdown", "/breakdown-last", "/copy-last", "/btw <task>", "/reindex", "/shrink", "/debug-context", "/vmax", "virgil fullpower"} {
+	for _, want := range []string{"/rewind", "/task <task>", "/tasks <path>", "/do <id>", "/breakdown", "/breakdown-last", "/copy-last", "/btw <task>", "/reindex", "/shrink", "/remember <note>", "/forget <n|all>", "/debug-context", "/vmax", "virgil fullpower"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("default help missing %q: %s", want, help)
 		}
@@ -188,10 +188,99 @@ func TestSlashCommandHelpShowsAllInFullPower(t *testing.T) {
 	m.SetFullPowerCommands(true)
 	help := m.slashCommandHelp()
 
-	for _, want := range []string{"/rewind", "/reindex", "/debug-context", "/last", "/continue", "/unstuck", "/abort"} {
+	for _, want := range []string{"/rewind", "/reindex", "/debug-context", "/last", "/remember <note>", "/forget <n|all>", "/continue", "/unstuck", "/abort"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("fullpower help missing %q: %s", want, help)
 		}
+	}
+}
+
+func TestRememberCommandPinsSessionMemory(t *testing.T) {
+	m := testModel()
+
+	updated, cmd := m.handleSlashCommand("/remember prefer small scoped edits")
+	got := updated.(*Model)
+	if cmd == nil {
+		t.Fatal("expected display command")
+	}
+	if len(got.sessionMemory) != 1 || got.sessionMemory[0] != "prefer small scoped edits" {
+		t.Fatalf("sessionMemory = %#v", got.sessionMemory)
+	}
+	if len(got.history) != 0 {
+		t.Fatalf("/remember should not add chat history, got %#v", got.history)
+	}
+}
+
+func TestRememberWithoutNoteListsSessionMemory(t *testing.T) {
+	m := testModel()
+	m.sessionMemory = []string{"first", "second"}
+
+	updated, cmd := m.handleSlashCommand("/remember")
+	got := updated.(*Model)
+	if cmd == nil {
+		t.Fatal("expected display command")
+	}
+	if got.input.Value() != "" {
+		t.Fatalf("input should be cleared, got %q", got.input.Value())
+	}
+	if len(got.sessionMemory) != 2 {
+		t.Fatalf("sessionMemory changed: %#v", got.sessionMemory)
+	}
+}
+
+func TestForgetCommandRemovesSessionMemory(t *testing.T) {
+	m := testModel()
+	m.sessionMemory = []string{"first", "second"}
+
+	updated, _ := m.handleSlashCommand("/forget 1")
+	got := updated.(*Model)
+	if len(got.sessionMemory) != 1 || got.sessionMemory[0] != "second" {
+		t.Fatalf("sessionMemory = %#v", got.sessionMemory)
+	}
+
+	updated, _ = got.handleSlashCommand("/forget all")
+	got = updated.(*Model)
+	if len(got.sessionMemory) != 0 {
+		t.Fatalf("sessionMemory should be empty, got %#v", got.sessionMemory)
+	}
+}
+
+func TestHistoryWithSessionMemoryInjectsSystemNoteWithoutMutatingHistory(t *testing.T) {
+	m := testModel()
+	m.history = []llm.Message{
+		{Role: "system", Content: "primary"},
+		{Role: "user", Content: "hello"},
+	}
+	m.sessionMemory = []string{"always answer in Japanese"}
+
+	got := m.historyWithSessionMemory()
+	if len(got) != 3 {
+		t.Fatalf("history len = %d, want 3: %#v", len(got), got)
+	}
+	if got[0].Content != "primary" {
+		t.Fatalf("first message = %#v", got[0])
+	}
+	if !isSessionMemoryMessage(got[1]) || !strings.Contains(got[1].Content, "always answer in Japanese") {
+		t.Fatalf("missing session memory message: %#v", got[1])
+	}
+	if len(m.history) != 2 {
+		t.Fatalf("original history mutated: %#v", m.history)
+	}
+}
+
+func TestHistoryWithoutSessionMemoryStripsInjectedNote(t *testing.T) {
+	m := testModel()
+	injected := sessionMemoryMessage([]string{"keep this active"})
+	got := m.historyWithoutSessionMemory([]llm.Message{
+		{Role: "system", Content: "primary"},
+		injected,
+		{Role: "user", Content: "hello"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("history len = %d, want 2: %#v", len(got), got)
+	}
+	if got[1].Content != "hello" {
+		t.Fatalf("unexpected history: %#v", got)
 	}
 }
 

@@ -259,7 +259,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(m.printSystem(fmt.Sprintf("❌ /task error: %v", msg.err)), autoOffCmd)
 		}
-		m.history = msg.response.Messages
+		m.history = m.historyWithoutSessionMemory(msg.response.Messages)
 		m.lastToolCalls = msg.response.ToolCalls
 		m.lastIterationLimitReached = msg.response.MaxIterationsReached
 		m.awaitingContinuation = msg.response.MaxIterationsReached && !m.doFlowActive
@@ -364,7 +364,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.response.Iterations, len(msg.response.ToolCalls))
 
 			// Update history and tool calls
-			m.history = msg.response.Messages
+			m.history = m.historyWithoutSessionMemory(msg.response.Messages)
 			m.lastToolCalls = msg.response.ToolCalls
 			m.lastIterationLimitReached = msg.response.MaxIterationsReached
 			m.awaitingContinuation = msg.response.MaxIterationsReached && !m.doFlowActive
@@ -517,6 +517,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.awaitingContinuation = false
 		m.lastIterationLimitReached = false
 		m.debugContext = nil
+		m.sessionMemory = nil
 		m.vmaxArmed = false
 		m.vmaxActive = false
 		m.currentRunMaxIterations = agent.MaxIterations
@@ -800,6 +801,62 @@ func formatInputHistory(history []string, limit int) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+func formatSessionMemory(notes []string) string {
+	if len(notes) == 0 {
+		return "Session memory is empty. Use /remember <note> to pin something for this session."
+	}
+	var b strings.Builder
+	b.WriteString("Session memory:\n")
+	for i, note := range notes {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, note)
+	}
+	b.WriteString("\nUse /forget <number> to remove one, or /forget all to clear them.")
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func sessionMemoryMessage(notes []string) llm.Message {
+	var b strings.Builder
+	b.WriteString("Session memory pinned by the user. Treat these as active requirements for the rest of this session unless the user explicitly changes or removes them:\n")
+	for i, note := range notes {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, note)
+	}
+	return llm.Message{Role: "system", Content: strings.TrimRight(b.String(), "\n")}
+}
+
+func isSessionMemoryMessage(msg llm.Message) bool {
+	return msg.Role == "system" && strings.HasPrefix(msg.Content, "Session memory pinned by the user.")
+}
+
+func (m Model) historyWithSessionMemory() []llm.Message {
+	if len(m.sessionMemory) == 0 {
+		return m.history
+	}
+	history := make([]llm.Message, 0, len(m.history)+1)
+	if len(m.history) > 0 && m.history[0].Role == "system" {
+		history = append(history, m.history[0])
+		history = append(history, sessionMemoryMessage(m.sessionMemory))
+		history = append(history, m.history[1:]...)
+		return history
+	}
+	history = append(history, sessionMemoryMessage(m.sessionMemory))
+	history = append(history, m.history...)
+	return history
+}
+
+func (m Model) historyWithoutSessionMemory(history []llm.Message) []llm.Message {
+	if len(history) == 0 {
+		return history
+	}
+	filtered := make([]llm.Message, 0, len(history))
+	for _, msg := range history {
+		if isSessionMemoryMessage(msg) {
+			continue
+		}
+		filtered = append(filtered, msg)
+	}
+	return filtered
+}
+
 func (m Model) navigateInputHistory(direction int) (tea.Model, tea.Cmd) {
 	switch {
 	case direction < 0:
@@ -1027,9 +1084,35 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 	case "/last":
 		return m.restoreInputHistoryEntry(len(m.inputHistory) - 1)
 
+	case "/remember":
+		note := strings.TrimSpace(input[len(parts[0]):])
+		if note == "" {
+			return m, m.printSystemDisplayOnly(formatSessionMemory(m.sessionMemory))
+		}
+		m.sessionMemory = append(m.sessionMemory, note)
+		return m, m.printSystemDisplayOnly(fmt.Sprintf("Remembered for this session: %s", note))
+
+	case "/forget":
+		if len(args) != 1 {
+			return m, m.printSystemDisplayOnly("Usage: /forget <number|all>")
+		}
+		if strings.EqualFold(args[0], "all") {
+			count := len(m.sessionMemory)
+			m.sessionMemory = nil
+			return m, m.printSystemDisplayOnly(fmt.Sprintf("Forgot %d session note(s).", count))
+		}
+		n, err := strconv.Atoi(args[0])
+		if err != nil || n <= 0 || n > len(m.sessionMemory) {
+			return m, m.printSystemDisplayOnly(fmt.Sprintf("Session note number must be between 1 and %d, or use /forget all.", len(m.sessionMemory)))
+		}
+		removed := m.sessionMemory[n-1]
+		m.sessionMemory = append(m.sessionMemory[:n-1], m.sessionMemory[n:]...)
+		return m, m.printSystemDisplayOnly(fmt.Sprintf("Forgot session note %d: %s", n, removed))
+
 	case "/clear":
 		m.awaitingContinuation = false
 		m.debugContext = nil
+		m.sessionMemory = nil
 		m.vmaxArmed = false
 		m.vmaxActive = false
 		return m, func() tea.Msg {
@@ -1425,6 +1508,8 @@ Available slash commands:
   /reindex         Reindex workspace (mtime-based diff; auto-forces on index version changes)
   /shrink          Compress older context into a summary (auto at 50%% or 20+ messages)
   /history [n]     Show input history or restore entry n into the input box
+  /remember <note> Pin a note into session memory for future agent calls
+  /forget <n|all>  Remove one or all session memory notes
   /clear           Clear context and start a new session
   /debug-context   Load debug context JSON and attach it to chat and /task
   /vmax            Arm one-shot VMAX mode when started with --dangerous-vmax
@@ -1469,6 +1554,8 @@ Available slash commands:
   /shrink          Compress older context into a summary (auto at 50%% or 20+ messages)
   /history [n]     Show input history or restore entry n into the input box
   /last            Restore the previous input into the input box
+  /remember <note> Pin a note into session memory for future agent calls
+  /forget <n|all>  Remove one or all session memory notes
   /confirm-run     Approve pending shell command
   /reject-run      Reject pending shell command
   <guidance>       While a shell command is pending, reject it and send guidance
@@ -1875,8 +1962,9 @@ func (m *Model) executeRewind(targetHash string) tea.Cmd {
 }
 
 func (m *Model) callBtw(ctx context.Context, question string) tea.Cmd {
+	history := m.historyWithSessionMemory()
 	return func() tea.Msg {
-		resp, err := m.agent.RunBtw(ctx, m.history, question)
+		resp, err := m.agent.RunBtw(ctx, history, question)
 		return agentBtwResponseMsg{
 			question: question,
 			response: resp,
@@ -1887,9 +1975,10 @@ func (m *Model) callBtw(ctx context.Context, question string) tea.Cmd {
 
 func (m *Model) callTask(ctx context.Context, description string, opts agent.RunOptions) tea.Cmd {
 	turnID := m.currentTurnID
+	history := m.historyWithSessionMemory()
 	return func() tea.Msg {
 		m.agent.SetCurrentTurnID(turnID)
-		resp, err := m.agent.RunTaskWithOptions(ctx, m.history, description, opts)
+		resp, err := m.agent.RunTaskWithOptions(ctx, history, description, opts)
 		return agentTaskResponseMsg{
 			description: description,
 			response:    resp,
@@ -1900,9 +1989,10 @@ func (m *Model) callTask(ctx context.Context, description string, opts agent.Run
 
 func (m *Model) callAgent(ctx context.Context, userInput string, opts agent.RunOptions) tea.Cmd {
 	turnID := m.currentTurnID // クロージャでキャプチャ
+	history := m.historyWithSessionMemory()
 	return func() tea.Msg {
 		m.agent.SetCurrentTurnID(turnID)
-		resp, err := m.agent.RunWithOptions(ctx, m.history, userInput, opts)
+		resp, err := m.agent.RunWithOptions(ctx, history, userInput, opts)
 		return agentResponseMsg{
 			response: resp,
 			err:      err,

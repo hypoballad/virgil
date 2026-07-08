@@ -746,6 +746,54 @@ Related files:
 
 - `internal/tui/update.go`
 
+### `/remember [note]`
+
+Arguments:
+
+- none: show pinned session memory notes
+- `note`: free-form text to keep active for the current session
+
+Behavior:
+
+- `/remember <note>` pins the note into session memory.
+- Pinned notes are injected into future normal chat, `/task`, continuation, and `/btw` agent calls as a system message.
+- The command itself does not call the LLM and does not add a user turn.
+- Session memory is process-local and is cleared by `/clear`.
+
+Usage:
+
+```text
+/remember Always answer final reports in Japanese.
+/remember
+```
+
+Related files:
+
+- `internal/tui/update.go`
+
+### `/forget <number|all>`
+
+Arguments:
+
+- `<number>`: 1-based session memory note number
+- `all`: clear all pinned session memory notes
+
+Behavior:
+
+- Removes one pinned note or clears all session memory notes.
+- Does not call the LLM and does not add a user turn.
+
+Usage:
+
+```text
+/forget 1
+/forget all
+```
+
+Related files:
+
+- `internal/tui/update.go`
+
 ### `/last`
 
 Arguments:
@@ -807,6 +855,8 @@ These are key bindings, not slash commands.
 - `/shrink`
 - `/history`
 - `/last`
+- `/remember`
+- `/forget`
 - `/confirm-run`
 - `/reject-run`
 - `/btw`

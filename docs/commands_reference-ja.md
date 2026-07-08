@@ -746,6 +746,54 @@ pytest ではなく python -m unittest で確認してください
 
 - `internal/tui/update.go`
 
+### `/remember [note]`
+
+引数:
+
+- なし: 登録済みのセッションメモリを表示します
+- `note`: 現在のセッション中に保持したい自由記述のメモ
+
+挙動:
+
+- `/remember <note>` はメモをセッションメモリに登録します。
+- 登録されたメモは、以後の通常チャット、`/task`、継続実行、`/btw` のエージェント呼び出しに system message として注入されます。
+- コマンド自体は LLM を呼び出さず、ユーザーターンも追加しません。
+- セッションメモリはプロセス内のみで保持され、`/clear` で消去されます。
+
+使用方法:
+
+```text
+/remember 最終報告は必ず日本語で返してください。
+/remember
+```
+
+関連ファイル:
+
+- `internal/tui/update.go`
+
+### `/forget <number|all>`
+
+引数:
+
+- `<number>`: 1始まりのセッションメモリ番号
+- `all`: 登録済みのセッションメモリをすべて消去します
+
+挙動:
+
+- 指定したメモを1件削除するか、すべてのセッションメモリを消去します。
+- LLM は呼び出さず、ユーザーターンも追加しません。
+
+使用方法:
+
+```text
+/forget 1
+/forget all
+```
+
+関連ファイル:
+
+- `internal/tui/update.go`
+
 ### `/last`
 
 引数:
@@ -807,6 +855,8 @@ Unknown command: <cmd>. Type /help for available commands.
 - `/shrink`
 - `/history`
 - `/last`
+- `/remember`
+- `/forget`
 - `/confirm-run`
 - `/reject-run`
 - `/btw`
