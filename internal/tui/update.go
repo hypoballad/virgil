@@ -566,9 +566,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.printSystem(fmt.Sprintf("❌ /shrink failed: %v", msg.err))
 		}
 
-		m.history = msg.newHistory
-		m.currentTokens = m.agent.EstimateContextTokens(m.history)
+		beforeTokens := msg.beforeTokens
+		if beforeTokens <= 0 && m.agent != nil {
+			beforeTokens = m.agent.EstimateContextTokens(m.history)
+		}
+		afterTokens := 0
+		if m.agent != nil {
+			afterTokens = m.agent.EstimateContextTokens(msg.newHistory)
+		}
 		m.shrinkInfoShown = false
+		if beforeTokens > 0 && afterTokens >= beforeTokens {
+			m.currentTokens = beforeTokens
+			beforePercent := msg.beforePercent
+			if beforePercent == 0 {
+				beforePercent = contextUsagePercent(beforeTokens, m.contextLimit)
+			}
+			afterPercent := contextUsagePercent(afterTokens, m.contextLimit)
+			return m, m.printSystemDisplayOnly(fmt.Sprintf(
+				"⚠️ Context shrink was not applied because it did not reduce context: %d%% → %d%% (%d → %d tokens). Too many recent/pinned messages remain; use /clear or start a new session if this repeats.",
+				beforePercent, afterPercent, beforeTokens, afterTokens,
+			))
+		}
+
+		m.history = msg.newHistory
+		m.currentTokens = afterTokens
 		if msg.auto {
 			m.lastAutoShrinkHistoryLen = len(m.history)
 			afterPercent := contextUsagePercent(m.currentTokens, m.contextLimit)
@@ -1632,15 +1653,16 @@ func (m *Model) showRewindHistory() tea.Cmd {
 }
 
 const (
-	shrinkRecentMessages        = 6
-	shrinkMaxMessagesToInput    = 24
-	shrinkMaxPinnedUserMessages = 8
-	shrinkMaxPinnedUserChars    = 1200
-	autoShrinkInfoPercent       = 30
-	autoShrinkTriggerPercent    = 50
-	autoShrinkMessageMinPercent = 30
-	autoShrinkMessageLimit      = 20
-	autoShrinkCooldown          = 6
+	shrinkRecentMessages         = 6
+	shrinkMaxMessagesToInput     = 24
+	shrinkMaxPinnedUserMessages  = 8
+	shrinkMaxPinnedUserChars     = 1200
+	shrinkMaxToolFailureLookback = 24
+	autoShrinkInfoPercent        = 30
+	autoShrinkTriggerPercent     = 50
+	autoShrinkMessageMinPercent  = 30
+	autoShrinkMessageLimit       = 20
+	autoShrinkCooldown           = 6
 )
 
 type autoShrinkDecision struct {
@@ -1763,7 +1785,11 @@ func protectShrinkToolContextSplit(body []llm.Message, split int) int {
 	for split > 0 && split < len(body) && body[split].Role == "tool" {
 		split--
 	}
-	for i := len(body) - 1; i >= 0; i-- {
+	lowerBound := split - shrinkMaxToolFailureLookback
+	if lowerBound < 0 {
+		lowerBound = 0
+	}
+	for i := split - 1; i >= lowerBound; i-- {
 		msg := body[i]
 		if msg.Role != "tool" || i >= split || !looksLikeShrinkToolFailure(msg.Content) {
 			continue

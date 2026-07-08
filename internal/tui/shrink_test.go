@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hypoballad/virgil/internal/agent"
@@ -87,6 +88,33 @@ func TestSplitHistoryForShrinkKeepsRecentToolFailure(t *testing.T) {
 	}
 }
 
+func TestSplitHistoryForShrinkIgnoresOldToolFailure(t *testing.T) {
+	history := []llm.Message{
+		{Role: "system", Content: "system prompt"},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{ID: "old-call", Function: llm.FunctionCall{Name: "edit_with_pattern"}},
+			},
+		},
+		{Role: "tool", Content: "find_text not found in config.ini", ToolCallID: "old-call"},
+	}
+	for i := 0; i < shrinkMaxToolFailureLookback+shrinkRecentMessages+4; i++ {
+		history = append(history, llm.Message{Role: "assistant", Content: "later work"})
+	}
+
+	_, older, recent := splitHistoryForShrink(history)
+	if len(older) == 0 {
+		t.Fatal("expected older messages")
+	}
+	if len(recent) != shrinkRecentMessages {
+		t.Fatalf("recent len = %d, want %d", len(recent), shrinkRecentMessages)
+	}
+	if recent[0].Role == "assistant" && len(recent[0].ToolCalls) > 0 {
+		t.Fatalf("old failed tool call should not anchor recent window: %#v", recent[0])
+	}
+}
+
 func TestBuildCompressedHistory(t *testing.T) {
 	base := []llm.Message{{Role: "system", Content: "system prompt"}}
 	recent := []llm.Message{{Role: "user", Content: "latest"}}
@@ -117,6 +145,41 @@ func TestBuildCompressedHistoryKeepsPinnedUserInstructions(t *testing.T) {
 	}
 	if compressed[2].Role != "user" || compressed[2].Content != pinned[0].Content {
 		t.Fatalf("pinned user instruction was not preserved raw: %#v", compressed)
+	}
+}
+
+func TestShrinkCompleteDoesNotApplyIneffectiveShrink(t *testing.T) {
+	agentInst := agent.New(nil, tools.NewRegistry())
+	model := NewModel(agentInst, nil, nil, nil, "session", "/tmp/workspace", "model", "", 1000, 5, 30)
+	oldHistory := []llm.Message{
+		{Role: "system", Content: "system prompt"},
+		{Role: "user", Content: "short"},
+	}
+	model.history = append([]llm.Message(nil), oldHistory...)
+
+	updated, _ := model.Update(shrinkCompleteMsg{
+		newHistory: []llm.Message{
+			{Role: "system", Content: "system prompt"},
+			{Role: "system", Content: "summary " + strings.Repeat("large ", 200)},
+		},
+		beforeTokens:       10,
+		beforePercent:      10,
+		summarizedMessages: 2,
+		keptMessages:       1,
+		auto:               true,
+	})
+	got := updated.(Model)
+
+	if len(got.history) != len(oldHistory) {
+		t.Fatalf("history should not be replaced by ineffective shrink: %#v", got.history)
+	}
+	for i := range oldHistory {
+		if got.history[i].Role != oldHistory[i].Role || got.history[i].Content != oldHistory[i].Content {
+			t.Fatalf("history[%d] = %#v, want %#v", i, got.history[i], oldHistory[i])
+		}
+	}
+	if got.lastAutoShrinkHistoryLen != 0 {
+		t.Fatalf("ineffective shrink should not start cooldown, got %d", got.lastAutoShrinkHistoryLen)
 	}
 }
 

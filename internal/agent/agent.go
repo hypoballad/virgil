@@ -39,6 +39,7 @@ const summaryInputMaxChars = 30000
 const preflightShrinkRecentMessages = 8
 const preflightShrinkMaxPinnedUserMessages = 8
 const preflightShrinkMaxPinnedUserChars = 1200
+const preflightShrinkMaxToolFailureLookback = 24
 
 const (
 	maxSemanticSafetyFailuresPerRun = 2
@@ -491,7 +492,11 @@ func protectRecentToolFailure(messages []llm.Message, bodyStart int, split int) 
 	if split <= bodyStart {
 		return split
 	}
-	for i := len(messages) - 1; i >= bodyStart; i-- {
+	lowerBound := split - preflightShrinkMaxToolFailureLookback
+	if lowerBound < bodyStart {
+		lowerBound = bodyStart
+	}
+	for i := split - 1; i >= lowerBound; i-- {
 		msg := messages[i]
 		if msg.Role != "tool" || i >= split || !looksLikeToolFailure(msg.Content) {
 			continue

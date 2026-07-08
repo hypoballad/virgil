@@ -620,6 +620,33 @@ func TestSplitMessagesForPreflightShrinkKeepsRecentToolFailure(t *testing.T) {
 	}
 }
 
+func TestSplitMessagesForPreflightShrinkIgnoresOldToolFailure(t *testing.T) {
+	messages := []llm.Message{
+		{Role: "system", Content: "system"},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{ID: "old-call", Function: llm.FunctionCall{Name: "edit_with_pattern"}},
+			},
+		},
+		{Role: "tool", Content: "find_text not found in config.ini", ToolCallID: "old-call"},
+	}
+	for i := 0; i < preflightShrinkMaxToolFailureLookback+preflightShrinkRecentMessages+4; i++ {
+		messages = append(messages, llm.Message{Role: "assistant", Content: "later work"})
+	}
+
+	_, older, recent := splitMessagesForPreflightShrink(messages, preflightShrinkRecentMessages)
+	if len(older) == 0 {
+		t.Fatal("expected older messages")
+	}
+	if len(recent) != preflightShrinkRecentMessages {
+		t.Fatalf("recent len = %d, want %d", len(recent), preflightShrinkRecentMessages)
+	}
+	if recent[0].Role == "assistant" && len(recent[0].ToolCalls) > 0 {
+		t.Fatalf("old failed tool call should not anchor recent window: %#v", recent[0])
+	}
+}
+
 func TestFormatMessagesForSummaryIncludesToolArguments(t *testing.T) {
 	input := formatMessagesForSummary([]llm.Message{
 		{
