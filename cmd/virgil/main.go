@@ -285,8 +285,8 @@ func main() {
 	agentInst.SetWorkspaceRoot(workspaceRoot)
 	agentInst.SetToolProfile(toolProfile)
 	agentInst.SetResponseLanguage(os.Getenv("VIRGIL_RESPONSE_LANGUAGE"))
-	if v := os.Getenv("VIRGIL_EDIT_ALLOWLIST"); v != "" {
-		agentInst.SetEditAllowlist(parseCSV(v), "VIRGIL_EDIT_ALLOWLIST")
+	if v := os.Getenv("VIRGIL_EDIT_DENYLIST"); v != "" {
+		agentInst.SetEditDenylist(parseCSV(v), "VIRGIL_EDIT_DENYLIST")
 	}
 
 	// Watchdog configuration

@@ -30,13 +30,13 @@ func (t *registryTestTool) IsMutating() bool {
 	return t.mutating
 }
 
-func TestRegistryEditAllowlistBlocksMutatingToolOutsideAllowedPath(t *testing.T) {
+func TestRegistryEditDenylistBlocksMutatingToolOnIgnoredPath(t *testing.T) {
 	registry := NewRegistry()
 	tool := &registryTestTool{name: "edit_with_pattern", mutating: true}
 	if err := registry.Register(tool); err != nil {
 		t.Fatal(err)
 	}
-	registry.SetEditAllowlist("/workspace", []string{"src/MAE_testcase/", "src/AE_pytorch.py"}, "test allowlist")
+	registry.SetEditDenylist("/workspace", []string{"src/interface/", "src/common.py"}, "test ignorelist")
 
 	result, err := registry.Execute(context.Background(), "edit_with_pattern", mustRegistryJSON(t, map[string]interface{}{
 		"path": "src/interface/process_set_interface.py",
@@ -45,23 +45,23 @@ func TestRegistryEditAllowlistBlocksMutatingToolOutsideAllowedPath(t *testing.T)
 		t.Fatalf("Execute error = %v", err)
 	}
 	if result == nil || !result.IsError {
-		t.Fatalf("expected allowlist block result, got %#v", result)
+		t.Fatalf("expected ignorelist block result, got %#v", result)
 	}
 	if tool.calls != 0 {
-		t.Fatalf("tool executed despite allowlist block, calls=%d", tool.calls)
+		t.Fatalf("tool executed despite ignorelist block, calls=%d", tool.calls)
 	}
-	if !strings.Contains(result.Content, "outside the allowed edit paths") || !strings.Contains(result.Content, "src/MAE_testcase/") {
+	if !strings.Contains(result.Content, "matches ignored edit paths") || !strings.Contains(result.Content, "src/interface/") {
 		t.Fatalf("unexpected block message: %s", result.Content)
 	}
 }
 
-func TestRegistryEditAllowlistAllowsDirectoryAndExactFile(t *testing.T) {
+func TestRegistryEditDenylistAllowsUnmatchedPaths(t *testing.T) {
 	registry := NewRegistry()
 	tool := &registryTestTool{name: "edit_file", mutating: true}
 	if err := registry.Register(tool); err != nil {
 		t.Fatal(err)
 	}
-	registry.SetEditAllowlist("/workspace", []string{"src/MAE_testcase/", "src/AE_pytorch.py"}, "test allowlist")
+	registry.SetEditDenylist("/workspace", []string{"src/interface/", "src/common.py"}, "test ignorelist")
 
 	for _, path := range []string{"src/MAE_testcase/configs/train.ini", "src/AE_pytorch.py", "/workspace/src/MAE_testcase/test.py"} {
 		result, err := registry.Execute(context.Background(), "edit_file", mustRegistryJSON(t, map[string]interface{}{
@@ -71,7 +71,7 @@ func TestRegistryEditAllowlistAllowsDirectoryAndExactFile(t *testing.T) {
 			t.Fatalf("Execute(%q) error = %v", path, err)
 		}
 		if result == nil || result.IsError {
-			t.Fatalf("Execute(%q) should pass allowlist, got %#v", path, result)
+			t.Fatalf("Execute(%q) should pass ignorelist, got %#v", path, result)
 		}
 	}
 	if tool.calls != 3 {
@@ -79,13 +79,13 @@ func TestRegistryEditAllowlistAllowsDirectoryAndExactFile(t *testing.T) {
 	}
 }
 
-func TestRegistryEditAllowlistDoesNotBlockReadOnlyTool(t *testing.T) {
+func TestRegistryEditDenylistDoesNotBlockReadOnlyTool(t *testing.T) {
 	registry := NewRegistry()
 	tool := &registryTestTool{name: "read_file", mutating: false}
 	if err := registry.Register(tool); err != nil {
 		t.Fatal(err)
 	}
-	registry.SetEditAllowlist("/workspace", []string{"src/MAE_testcase/"}, "test allowlist")
+	registry.SetEditDenylist("/workspace", []string{"src/interface/"}, "test ignorelist")
 
 	result, err := registry.Execute(context.Background(), "read_file", mustRegistryJSON(t, map[string]interface{}{
 		"path": "src/interface/process_set_interface.py",

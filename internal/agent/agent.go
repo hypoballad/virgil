@@ -266,11 +266,11 @@ func (a *Agent) SetWorkspaceRoot(root string) {
 	a.workspaceRoot = root
 }
 
-func (a *Agent) SetEditAllowlist(paths []string, source string) {
+func (a *Agent) SetEditDenylist(paths []string, source string) {
 	if a.tools == nil {
 		return
 	}
-	a.tools.SetEditAllowlist(a.workspaceRoot, paths, source)
+	a.tools.SetEditDenylist(a.workspaceRoot, paths, source)
 }
 
 // SetPlanMode はプランモードのON/OFFを切り替える

@@ -771,37 +771,40 @@ Related files:
 
 - `internal/tui/update.go`
 
-### `/editallow [--reload [path]]`
+### `/editignore [--reload [path]]`
 
 Arguments:
 
-- none: show the active edit allowlist loaded from file/env
-- `--reload`: reload `.virgil/editallow`, or `VIRGIL_EDITALLOW_FILE` when set
-- `--reload <path>`: reload the given allowlist file; relative paths are resolved from the workspace root
+- none: show the active edit ignorelist loaded from file/env
+- `--reload`: reload `.virgil/editignore`, or `VIRGIL_EDITIGNORE_FILE` when set
+- `--reload <path>`: reload the given ignorelist file; relative paths are resolved from the workspace root
 
 Behavior:
 
-- Enforces a hard allowlist for mutating file tools such as `write_file`, `edit_file`, and `edit_with_pattern`.
-- Read-only tools are not blocked by the edit allowlist.
-- The default file is `.virgil/editallow`; it is auto-loaded at startup when present.
-- `VIRGIL_EDIT_ALLOWLIST` can also define the same allowlist as comma-separated paths.
+- Blocks mutating file tools such as `write_file`, `edit_file`, and `edit_with_pattern` when their path matches the ignorelist.
+- Read-only tools are not blocked by the edit ignorelist.
+- The default file is `.virgil/editignore`; it is auto-loaded at startup when present.
+- `VIRGIL_EDIT_DENYLIST` can also define the same ignorelist as comma-separated paths.
+- `base: <path>` sets a base directory for following relative entries. The base may be absolute if it is inside the workspace root.
 - Directories should end with `/`.
 
 Usage:
 
 ```text
-/editallow
-/editallow --reload
-/editallow --reload policy/editallow
+/editignore
+/editignore --reload
+/editignore --reload policy/editignore
 ```
 
-Example `.virgil/editallow`:
+Example `.virgil/editignore`:
 
 ```text
 # One path per line, or comma-separated paths
-src/MAE_testcase/
-src/AE_pytorch.py
-src/MAE_pytorch.py
+base: src
+
+interface/
+common.py
+train.py
 ```
 
 ### `/forget <number|all>`
@@ -890,7 +893,7 @@ These are key bindings, not slash commands.
 - `/last`
 - `/remember`
 - `/forget`
-- `/editallow`
+- `/editignore`
 - `/confirm-run`
 - `/reject-run`
 - `/btw`

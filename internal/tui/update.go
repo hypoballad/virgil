@@ -23,7 +23,7 @@ import (
 )
 
 const doFlowMaxContinuationWindows = 12
-const defaultEditAllowFile = ".virgil/editallow"
+const defaultEditIgnoreFile = ".virgil/editignore"
 const sessionMemorySourceManual = "manual"
 
 type indexerTickMsg struct{}
@@ -837,16 +837,16 @@ func formatSessionMemory(notes []sessionMemoryNote) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func formatEditAllowlist(paths []string) string {
+func formatEditDenylist(paths []string) string {
 	if len(paths) == 0 {
-		return "Edit allowlist is empty. Mutating file tools are unrestricted except for protected paths. Edit .virgil/editallow and run /editallow --reload to enforce one."
+		return "Edit ignorelist is empty. Mutating file tools are unrestricted except for protected paths. Edit .virgil/editignore and run /editignore --reload to enforce one."
 	}
 	var b strings.Builder
-	b.WriteString("Edit allowlist:\n")
+	b.WriteString("Edit ignorelist:\n")
 	for i, path := range paths {
 		fmt.Fprintf(&b, "%d. %s\n", i+1, path)
 	}
-	b.WriteString("\nUse /editallow --reload [path] to reload file-backed edit restrictions.")
+	b.WriteString("\nUse /editignore --reload [path] to reload file-backed edit restrictions.")
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -879,14 +879,14 @@ func (m Model) historyWithSessionMemory() []llm.Message {
 	return history
 }
 
-func resolveEditAllowFile(workspaceRoot string, override string) (string, bool) {
+func resolveEditIgnoreFile(workspaceRoot string, override string) (string, bool) {
 	if path := strings.TrimSpace(override); path != "" {
 		return resolveWorkspacePath(workspaceRoot, path), true
 	}
-	if path := strings.TrimSpace(os.Getenv("VIRGIL_EDITALLOW_FILE")); path != "" {
+	if path := strings.TrimSpace(os.Getenv("VIRGIL_EDITIGNORE_FILE")); path != "" {
 		return resolveWorkspacePath(workspaceRoot, path), true
 	}
-	return resolveWorkspacePath(workspaceRoot, defaultEditAllowFile), false
+	return resolveWorkspacePath(workspaceRoot, defaultEditIgnoreFile), false
 }
 
 func resolveWorkspacePath(workspaceRoot string, path string) string {
@@ -899,9 +899,10 @@ func resolveWorkspacePath(workspaceRoot string, path string) string {
 	return filepath.Join(workspaceRoot, path)
 }
 
-func parseEditAllowFile(content string) []string {
+func parseEditIgnoreFile(workspaceRoot string, content string) []string {
 	lines := strings.Split(content, "\n")
 	paths := make([]string, 0, len(lines))
+	base := ""
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -910,58 +911,117 @@ func parseEditAllowFile(content string) []string {
 		line = strings.Trim(strings.TrimSpace(line), "`")
 		lower := strings.ToLower(line)
 		switch {
-		case strings.HasPrefix(lower, "edit-allow:"):
-			paths = append(paths, parseCSVLike(strings.TrimSpace(line[len("edit-allow:"):]))...)
-		case strings.HasPrefix(lower, "edit_allow:"):
-			paths = append(paths, parseCSVLike(strings.TrimSpace(line[len("edit_allow:"):]))...)
+		case strings.HasPrefix(lower, "base:"):
+			base = normalizeEditIgnoreBase(workspaceRoot, strings.TrimSpace(line[len("base:"):]))
+		case strings.HasPrefix(lower, "edit-ignore:"):
+			paths = append(paths, resolveEditIgnoreEntries(workspaceRoot, base, parseCSVLike(strings.TrimSpace(line[len("edit-ignore:"):]))...)...)
+		case strings.HasPrefix(lower, "edit_ignore:"):
+			paths = append(paths, resolveEditIgnoreEntries(workspaceRoot, base, parseCSVLike(strings.TrimSpace(line[len("edit_ignore:"):]))...)...)
 		default:
-			paths = append(paths, parseCSVLike(line)...)
+			paths = append(paths, resolveEditIgnoreEntries(workspaceRoot, base, parseCSVLike(line)...)...)
 		}
 	}
 	return dedupeStrings(paths)
 }
 
-func (m *Model) reloadEditAllowlistFromDefaultFile(reportMissingDefault bool) (string, error) {
-	path, explicit := resolveEditAllowFile(m.workspaceRoot, "")
+func normalizeEditIgnoreBase(workspaceRoot string, base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return ""
+	}
+	if filepath.IsAbs(base) {
+		if workspaceRoot == "" {
+			return ""
+		}
+		rel, err := filepath.Rel(filepath.Clean(workspaceRoot), filepath.Clean(base))
+		if err != nil || rel == "." || strings.HasPrefix(rel, "../") || rel == ".." {
+			return ""
+		}
+		base = rel
+	}
+	base = filepath.ToSlash(filepath.Clean(base))
+	base = strings.TrimPrefix(base, "./")
+	if base == "." || strings.HasPrefix(base, "../") || base == ".." {
+		return ""
+	}
+	return strings.TrimSuffix(base, "/")
+}
+
+func resolveEditIgnoreEntries(workspaceRoot string, base string, entries ...string) []string {
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		dirPattern := strings.HasSuffix(entry, "/") || strings.HasSuffix(entry, string(filepath.Separator))
+		path := entry
+		if filepath.IsAbs(path) {
+			if workspaceRoot == "" {
+				continue
+			}
+			rel, err := filepath.Rel(filepath.Clean(workspaceRoot), filepath.Clean(path))
+			if err != nil || rel == "." || strings.HasPrefix(rel, "../") || rel == ".." {
+				continue
+			}
+			path = rel
+		} else if base != "" {
+			path = filepath.ToSlash(filepath.Join(base, path))
+		}
+		path = filepath.ToSlash(filepath.Clean(path))
+		path = strings.TrimPrefix(path, "./")
+		if path == "." || strings.HasPrefix(path, "../") || path == ".." {
+			continue
+		}
+		if dirPattern && !strings.HasSuffix(path, "/") {
+			path += "/"
+		}
+		out = append(out, path)
+	}
+	return out
+}
+
+func (m *Model) reloadEditDenylistFromDefaultFile(reportMissingDefault bool) (string, error) {
+	path, explicit := resolveEditIgnoreFile(m.workspaceRoot, "")
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) && !explicit && !reportMissingDefault {
-			m.editAllowlist = nil
-			m.applyEditAllowlist()
+			m.editDenylist = nil
+			m.applyEditDenylist()
 			return path, nil
 		}
 		return path, err
 	}
-	return m.reloadEditAllowlistFromFile(path)
+	return m.reloadEditDenylistFromFile(path)
 }
 
-func (m *Model) reloadEditAllowlistFromFile(path string) (string, error) {
+func (m *Model) reloadEditDenylistFromFile(path string) (string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return path, err
 	}
-	m.editAllowlist = parseEditAllowFile(string(content))
-	m.applyEditAllowlist()
+	m.editDenylist = parseEditIgnoreFile(m.workspaceRoot, string(content))
+	m.applyEditDenylist()
 	return path, nil
 }
 
-func (m *Model) applyEditAllowlist() {
+func (m *Model) applyEditDenylist() {
 	if m.agent == nil {
 		return
 	}
-	paths := m.currentEditAllowlist()
+	paths := m.currentEditDenylist()
 	sourceParts := make([]string, 0, 2)
-	if len(parseCSVLike(os.Getenv("VIRGIL_EDIT_ALLOWLIST"))) > 0 {
-		sourceParts = append(sourceParts, "VIRGIL_EDIT_ALLOWLIST")
+	if len(parseCSVLike(os.Getenv("VIRGIL_EDIT_DENYLIST"))) > 0 {
+		sourceParts = append(sourceParts, "VIRGIL_EDIT_DENYLIST")
 	}
-	if len(m.editAllowlist) > 0 {
-		sourceParts = append(sourceParts, "editallow")
+	if len(m.editDenylist) > 0 {
+		sourceParts = append(sourceParts, "editignore")
 	}
-	m.agent.SetEditAllowlist(paths, strings.Join(sourceParts, " and "))
+	m.agent.SetEditDenylist(paths, strings.Join(sourceParts, " and "))
 }
 
-func (m Model) currentEditAllowlist() []string {
-	paths := parseCSVLike(os.Getenv("VIRGIL_EDIT_ALLOWLIST"))
-	paths = append(paths, m.editAllowlist...)
+func (m Model) currentEditDenylist() []string {
+	paths := resolveEditIgnoreEntries(m.workspaceRoot, "", parseCSVLike(os.Getenv("VIRGIL_EDIT_DENYLIST"))...)
+	paths = append(paths, m.editDenylist...)
 	return dedupeStrings(paths)
 }
 
@@ -1264,28 +1324,28 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		m.sessionMemory = append(m.sessionMemory[:n-1], m.sessionMemory[n:]...)
 		return m, m.printSystemDisplayOnly(fmt.Sprintf("Forgot session note %d: %s", n, removed))
 
-	case "/editallow":
+	case "/editignore":
 		if len(args) == 0 {
-			return m, m.printSystemDisplayOnly(formatEditAllowlist(m.currentEditAllowlist()))
+			return m, m.printSystemDisplayOnly(formatEditDenylist(m.currentEditDenylist()))
 		}
 		if args[0] != "--reload" || len(args) > 2 {
-			return m, m.printSystemDisplayOnly("Usage: /editallow [--reload [path]]")
+			return m, m.printSystemDisplayOnly("Usage: /editignore [--reload [path]]")
 		}
 		pathArg := ""
 		if len(args) == 2 {
 			pathArg = args[1]
 		}
-		path, explicit := resolveEditAllowFile(m.workspaceRoot, pathArg)
+		path, explicit := resolveEditIgnoreFile(m.workspaceRoot, pathArg)
 		var err error
 		if explicit {
-			_, err = m.reloadEditAllowlistFromFile(path)
+			_, err = m.reloadEditDenylistFromFile(path)
 		} else {
-			_, err = m.reloadEditAllowlistFromDefaultFile(true)
+			_, err = m.reloadEditDenylistFromDefaultFile(true)
 		}
 		if err != nil {
-			return m, m.printSystemDisplayOnly(fmt.Sprintf("Failed to reload edit allowlist from %s: %v", path, err))
+			return m, m.printSystemDisplayOnly(fmt.Sprintf("Failed to reload edit ignorelist from %s: %v", path, err))
 		}
-		return m, m.printSystemDisplayOnly(fmt.Sprintf("Reloaded edit allowlist from %s.\n\n%s", path, formatEditAllowlist(m.currentEditAllowlist())))
+		return m, m.printSystemDisplayOnly(fmt.Sprintf("Reloaded edit ignorelist from %s.\n\n%s", path, formatEditDenylist(m.currentEditDenylist())))
 
 	case "/clear":
 		m.awaitingContinuation = false
@@ -1688,8 +1748,8 @@ Available slash commands:
   /history [n]     Show input history or restore entry n into the input box
   /remember <note> Pin a note into session memory for future agent calls
   /forget <n|all>  Remove one or all session memory notes
-  /editallow [--reload [path]]
-                   Show or reload mutating file tool allowlist from .virgil/editallow
+  /editignore [--reload [path]]
+                   Show or reload mutating file tool ignorelist from .virgil/editignore
   /clear           Clear context and start a new session
   /debug-context   Load debug context JSON and attach it to chat and /task
   /vmax            Arm one-shot VMAX mode when started with --dangerous-vmax
@@ -1736,8 +1796,8 @@ Available slash commands:
   /last            Restore the previous input into the input box
   /remember <note> Pin a note into session memory for future agent calls
   /forget <n|all>  Remove one or all session memory notes
-  /editallow [--reload [path]]
-                   Show or reload mutating file tool allowlist from .virgil/editallow
+  /editignore [--reload [path]]
+                   Show or reload mutating file tool ignorelist from .virgil/editignore
   /confirm-run     Approve pending shell command
   /reject-run      Reject pending shell command
   <guidance>       While a shell command is pending, reject it and send guidance

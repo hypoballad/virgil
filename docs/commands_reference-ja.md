@@ -771,37 +771,40 @@ pytest ではなく python -m unittest で確認してください
 
 - `internal/tui/update.go`
 
-### `/editallow [--reload [path]]`
+### `/editignore [--reload [path]]`
 
 引数:
 
-- なし: ファイル/env から読み込まれている現在の編集許可リストを表示します
-- `--reload`: `.virgil/editallow`、または `VIRGIL_EDITALLOW_FILE` が設定されていればそのファイルを再読み込みします
-- `--reload <path>`: 指定した allowlist ファイルを再読み込みします。相対パスは workspace root 基準です
+- なし: ファイル/env から読み込まれている現在の edit ignorelist を表示します
+- `--reload`: `.virgil/editignore`、または `VIRGIL_EDITIGNORE_FILE` が設定されていればそのファイルを再読み込みします
+- `--reload <path>`: 指定した ignorelist ファイルを再読み込みします。相対パスは workspace root 基準です
 
 挙動:
 
-- `write_file`、`edit_file`、`edit_with_pattern` などの書き込み系ツールに対して、強制的な編集許可リストを適用します。
-- 読み取り専用ツールは editallow ではブロックされません。
-- 既定ファイルは `.virgil/editallow` です。存在する場合は起動時に自動読み込みされます。
-- `VIRGIL_EDIT_ALLOWLIST` でも同じ許可リストをカンマ区切りで指定できます。
+- `write_file`、`edit_file`、`edit_with_pattern` などの書き込み系ツールの path が ignorelist に一致する場合、実行前にブロックします。
+- 読み取り専用ツールは editignore ではブロックされません。
+- 既定ファイルは `.virgil/editignore` です。存在する場合は起動時に自動読み込みされます。
+- `VIRGIL_EDIT_DENYLIST` でも同じ ignorelist をカンマ区切りで指定できます。
+- `base: <path>` で、それ以降の相対エントリの基準ディレクトリを指定できます。base は workspace root 配下であれば絶対パスでも指定できます。
 - ディレクトリは `/` で終えてください。
 
 使用方法:
 
 ```text
-/editallow
-/editallow --reload
-/editallow --reload policy/editallow
+/editignore
+/editignore --reload
+/editignore --reload policy/editignore
 ```
 
-`.virgil/editallow` の例:
+`.virgil/editignore` の例:
 
 ```text
 # 1行1パス、またはカンマ区切り
-src/MAE_testcase/
-src/AE_pytorch.py
-src/MAE_pytorch.py
+base: src
+
+interface/
+common.py
+train.py
 ```
 
 ### `/forget <number|all>`
@@ -890,7 +893,7 @@ Unknown command: <cmd>. Type /help for available commands.
 - `/last`
 - `/remember`
 - `/forget`
-- `/editallow`
+- `/editignore`
 - `/confirm-run`
 - `/reject-run`
 - `/btw`

@@ -173,7 +173,7 @@ func TestSlashCommandHelpIsFilteredByDefault(t *testing.T) {
 	m := testModel()
 	help := m.slashCommandHelp()
 
-	for _, want := range []string{"/rewind", "/task <task>", "/tasks <path>", "/do <id>", "/breakdown", "/breakdown-last", "/copy-last", "/btw <task>", "/reindex", "/shrink", "/remember <note>", "/forget <n|all>", "/editallow", "/debug-context", "/vmax", "virgil fullpower"} {
+	for _, want := range []string{"/rewind", "/task <task>", "/tasks <path>", "/do <id>", "/breakdown", "/breakdown-last", "/copy-last", "/btw <task>", "/reindex", "/shrink", "/remember <note>", "/forget <n|all>", "/editignore", "/debug-context", "/vmax", "virgil fullpower"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("default help missing %q: %s", want, help)
 		}
@@ -190,7 +190,7 @@ func TestSlashCommandHelpShowsAllInFullPower(t *testing.T) {
 	m.SetFullPowerCommands(true)
 	help := m.slashCommandHelp()
 
-	for _, want := range []string{"/rewind", "/reindex", "/debug-context", "/last", "/remember <note>", "/forget <n|all>", "/editallow", "/continue", "/unstuck", "/abort"} {
+	for _, want := range []string{"/rewind", "/reindex", "/debug-context", "/last", "/remember <note>", "/forget <n|all>", "/editignore", "/continue", "/unstuck", "/abort"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("fullpower help missing %q: %s", want, help)
 		}
@@ -233,62 +233,62 @@ func TestRememberWithoutNoteListsSessionMemory(t *testing.T) {
 	}
 }
 
-func TestEditAllowReloadDefaultFile(t *testing.T) {
-	t.Setenv("VIRGIL_EDITALLOW_FILE", "")
+func TestEditIgnoreReloadDefaultFile(t *testing.T) {
+	t.Setenv("VIRGIL_EDITIGNORE_FILE", "")
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".virgil"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, ".virgil", "editallow")
-	if err := os.WriteFile(path, []byte("# edit policy\nsrc/MAE_testcase/\nsrc/AE_pytorch.py, src/MAE_pytorch.py\nsrc/AE_pytorch.py\n"), 0600); err != nil {
+	path := filepath.Join(root, ".virgil", "editignore")
+	if err := os.WriteFile(path, []byte("# edit policy\nbase: src\ninterface/\ncommon.py, train.py\ncommon.py\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	m := testModel()
 	m.workspaceRoot = root
 
-	updated, cmd := m.handleSlashCommand("/editallow --reload")
+	updated, cmd := m.handleSlashCommand("/editignore --reload")
 	got := updated.(*Model)
 	if cmd == nil {
 		t.Fatal("expected display command")
 	}
-	want := []string{"src/MAE_testcase/", "src/AE_pytorch.py", "src/MAE_pytorch.py"}
+	want := []string{"src/interface/", "src/common.py", "src/train.py"}
 	for i := range want {
-		if i >= len(got.editAllowlist) || got.editAllowlist[i] != want[i] {
-			t.Fatalf("editAllowlist = %#v, want %#v", got.editAllowlist, want)
+		if i >= len(got.editDenylist) || got.editDenylist[i] != want[i] {
+			t.Fatalf("editDenylist = %#v, want %#v", got.editDenylist, want)
 		}
 	}
 }
 
-func TestEditAllowReloadExplicitPath(t *testing.T) {
+func TestEditIgnoreReloadExplicitPath(t *testing.T) {
 	root := t.TempDir()
-	path := filepath.Join(root, "editallow")
-	if err := os.WriteFile(path, []byte("edit-allow: src/MAE_testcase/, src/AE_pytorch.py\n"), 0600); err != nil {
+	path := filepath.Join(root, "editignore")
+	if err := os.WriteFile(path, []byte("edit-ignore: src/interface/, src/common.py\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	m := testModel()
 	m.workspaceRoot = root
 
-	updated, _ := m.handleSlashCommand("/editallow --reload editallow")
+	updated, _ := m.handleSlashCommand("/editignore --reload editignore")
 	got := updated.(*Model)
-	want := []string{"src/MAE_testcase/", "src/AE_pytorch.py"}
-	if strings.Join(got.editAllowlist, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("editAllowlist = %#v, want %#v", got.editAllowlist, want)
+	want := []string{"src/interface/", "src/common.py"}
+	if strings.Join(got.editDenylist, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("editDenylist = %#v, want %#v", got.editDenylist, want)
 	}
 }
 
-func TestNewModelAutoloadsDefaultEditAllowFile(t *testing.T) {
-	t.Setenv("VIRGIL_EDITALLOW_FILE", "")
+func TestNewModelAutoloadsDefaultEditIgnoreFile(t *testing.T) {
+	t.Setenv("VIRGIL_EDITIGNORE_FILE", "")
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".virgil"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".virgil", "editallow"), []byte("src/MAE_testcase/\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".virgil", "editignore"), []byte("base: "+filepath.Join(root, "src")+"\ninterface/\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
 	m := NewModel(agent.New(nil, nil), nil, nil, nil, "session", root, "model", "", 12000, 5, 30)
-	if len(m.editAllowlist) != 1 || m.editAllowlist[0] != "src/MAE_testcase/" {
-		t.Fatalf("editAllowlist = %#v", m.editAllowlist)
+	if len(m.editDenylist) != 1 || m.editDenylist[0] != "src/interface/" {
+		t.Fatalf("editDenylist = %#v", m.editDenylist)
 	}
 }
 
