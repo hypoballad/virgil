@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,8 @@ const doFlowMaxContinuationWindows = 12
 const defaultRememberFile = ".virgil/remember.md"
 const sessionMemorySourceManual = "manual"
 const sessionMemorySourceFile = "file"
+
+var rememberPathPattern = regexp.MustCompile(`(?:^|[\s,、。:：` + "`" + `])((?:\./)?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+/?)`)
 
 type indexerTickMsg struct{}
 
@@ -521,6 +524,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastIterationLimitReached = false
 		m.debugContext = nil
 		m.sessionMemory = nil
+		m.applySessionMemoryEditAllowlist()
 		m.vmaxArmed = false
 		m.vmaxActive = false
 		m.currentRunMaxIterations = agent.MaxIterations
@@ -947,6 +951,104 @@ func (m *Model) replaceFileSessionMemory(fileNotes []string) {
 		out = append(out, sessionMemoryNote{Text: text, Source: sessionMemorySourceFile})
 	}
 	m.sessionMemory = out
+	m.applySessionMemoryEditAllowlist()
+}
+
+func (m *Model) applySessionMemoryEditAllowlist() {
+	if m.agent == nil {
+		return
+	}
+	paths := parseCSVLike(os.Getenv("VIRGIL_EDIT_ALLOWLIST"))
+	sourceParts := make([]string, 0, 2)
+	if len(paths) > 0 {
+		sourceParts = append(sourceParts, "VIRGIL_EDIT_ALLOWLIST")
+	}
+	memoryPaths := editAllowlistFromSessionMemory(m.sessionMemory)
+	if len(memoryPaths) > 0 {
+		paths = append(paths, memoryPaths...)
+		sourceParts = append(sourceParts, "session memory")
+	}
+	m.agent.SetEditAllowlist(paths, strings.Join(sourceParts, " and "))
+}
+
+func editAllowlistFromSessionMemory(notes []sessionMemoryNote) []string {
+	out := make([]string, 0)
+	for _, note := range notes {
+		text := strings.TrimSpace(note.Text)
+		if text == "" {
+			continue
+		}
+		lower := strings.ToLower(text)
+		switch {
+		case strings.HasPrefix(lower, "edit-allow:"):
+			out = append(out, parseCSVLike(strings.TrimSpace(text[len("edit-allow:"):]))...)
+		case strings.HasPrefix(lower, "edit_allow:"):
+			out = append(out, parseCSVLike(strings.TrimSpace(text[len("edit_allow:"):]))...)
+		case looksLikeEditAllowlistInstruction(text):
+			out = append(out, extractWorkspacePathsFromText(text)...)
+		}
+	}
+	return dedupeStrings(out)
+}
+
+func looksLikeEditAllowlistInstruction(text string) bool {
+	return strings.Contains(text, "編集可能") ||
+		strings.Contains(text, "編集許可") ||
+		strings.Contains(text, "以外のファイルは絶対に編集しない") ||
+		strings.Contains(text, "以外は編集しない") ||
+		strings.Contains(strings.ToLower(text), "edit-allow")
+}
+
+func extractWorkspacePathsFromText(text string) []string {
+	matches := rememberPathPattern.FindAllStringSubmatch(text, -1)
+	out := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		path := strings.Trim(match[1], "`")
+		if path == "" {
+			continue
+		}
+		if strings.Contains(text, path+"配下") && !strings.HasSuffix(path, "/") {
+			path += "/"
+		}
+		out = append(out, path)
+	}
+	return dedupeStrings(out)
+}
+
+func parseCSVLike(text string) []string {
+	fields := strings.FieldsFunc(text, func(r rune) bool {
+		switch r {
+		case ',', '、', '\n', '\t':
+			return true
+		default:
+			return false
+		}
+	})
+	out := make([]string, 0, len(fields))
+	for _, field := range fields {
+		field = strings.Trim(strings.TrimSpace(field), "`")
+		if field != "" {
+			out = append(out, field)
+		}
+	}
+	return dedupeStrings(out)
+}
+
+func dedupeStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func (m Model) historyWithoutSessionMemory(history []llm.Message) []llm.Message {
@@ -1216,6 +1318,7 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			return m, m.printSystemDisplayOnly(fmt.Sprintf("Reloaded session memory from %s.\n\n%s", path, formatSessionMemory(m.sessionMemory)))
 		}
 		m.sessionMemory = append(m.sessionMemory, sessionMemoryNote{Text: note, Source: sessionMemorySourceManual})
+		m.applySessionMemoryEditAllowlist()
 		return m, m.printSystemDisplayOnly(fmt.Sprintf("Remembered for this session: %s", note))
 
 	case "/forget":
@@ -1225,6 +1328,7 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		if strings.EqualFold(args[0], "all") {
 			count := len(m.sessionMemory)
 			m.sessionMemory = nil
+			m.applySessionMemoryEditAllowlist()
 			return m, m.printSystemDisplayOnly(fmt.Sprintf("Forgot %d session note(s).", count))
 		}
 		n, err := strconv.Atoi(args[0])
@@ -1233,12 +1337,14 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		}
 		removed := m.sessionMemory[n-1]
 		m.sessionMemory = append(m.sessionMemory[:n-1], m.sessionMemory[n:]...)
+		m.applySessionMemoryEditAllowlist()
 		return m, m.printSystemDisplayOnly(fmt.Sprintf("Forgot session note %d: %s", n, removed))
 
 	case "/clear":
 		m.awaitingContinuation = false
 		m.debugContext = nil
 		m.sessionMemory = nil
+		m.applySessionMemoryEditAllowlist()
 		m.vmaxArmed = false
 		m.vmaxActive = false
 		return m, func() tea.Msg {
@@ -1637,6 +1743,8 @@ Available slash commands:
   /remember <note> Pin a note into session memory for future agent calls
   /remember --reload [path]
                    Reload file notes from .virgil/remember.md or VIRGIL_REMEMBER_FILE
+  /remember edit-allow: <paths>
+                   Enforce a hard allowlist for mutating file tools
   /forget <n|all>  Remove one or all session memory notes
   /clear           Clear context and start a new session
   /debug-context   Load debug context JSON and attach it to chat and /task
@@ -1685,6 +1793,8 @@ Available slash commands:
   /remember <note> Pin a note into session memory for future agent calls
   /remember --reload [path]
                    Reload file notes from .virgil/remember.md or VIRGIL_REMEMBER_FILE
+  /remember edit-allow: <paths>
+                   Enforce a hard allowlist for mutating file tools
   /forget <n|all>  Remove one or all session memory notes
   /confirm-run     Approve pending shell command
   /reject-run      Reject pending shell command

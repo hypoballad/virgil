@@ -759,6 +759,8 @@ pytest ではなく python -m unittest で確認してください
 - `/remember <note>` はメモをセッションメモリに登録します。
 - `/remember --reload` は `VIRGIL_REMEMBER_FILE`、未設定なら `.virgil/remember.md` からファイル由来メモを再読み込みします。
 - `/remember --reload <path>` は指定パスからファイル由来メモを再読み込みします。相対パスは workspace root 基準です。
+- `edit-allow:` で始まるメモは、書き込み系ツールに対する強制的な編集許可リストとして扱われます。例: `edit-allow: src/MAE_testcase/, src/AE_pytorch.py`
+- `VIRGIL_EDIT_ALLOWLIST` でも同じ編集許可リストをカンマ区切りで指定できます。
 - 登録されたメモは、以後の通常チャット、`/task`、継続実行、`/btw` のエージェント呼び出しに system message として注入されます。
 - コマンド自体は LLM を呼び出さず、ユーザーターンも追加しません。
 - remember ファイルが存在する場合は起動時にも読み込まれます。`/forget` と `/clear` はファイルを変更せず、次回 reload でファイル由来メモは復元できます。
@@ -768,6 +770,7 @@ pytest ではなく python -m unittest で確認してください
 
 ```text
 /remember 最終報告は必ず日本語で返してください。
+/remember edit-allow: src/MAE_testcase/, src/AE_pytorch.py, src/MAE_pytorch.py
 /remember --reload
 /remember
 ```

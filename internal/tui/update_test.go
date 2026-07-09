@@ -288,6 +288,28 @@ func TestRememberReloadExplicitPath(t *testing.T) {
 	}
 }
 
+func TestEditAllowlistFromSessionMemorySupportsDirective(t *testing.T) {
+	got := editAllowlistFromSessionMemory([]sessionMemoryNote{
+		{Text: "edit-allow: src/MAE_testcase/, src/AE_pytorch.py, src/MAE_pytorch.py", Source: sessionMemorySourceFile},
+	})
+
+	want := []string{"src/MAE_testcase/", "src/AE_pytorch.py", "src/MAE_pytorch.py"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("allowlist = %#v, want %#v", got, want)
+	}
+}
+
+func TestEditAllowlistFromSessionMemoryExtractsJapaneseRestriction(t *testing.T) {
+	got := editAllowlistFromSessionMemory([]sessionMemoryNote{
+		{Text: "src/MAE_testcase配下 , src/AE_pytorch.py , src/MAE_pytorch.py 以外のファイルは絶対に編集しないでください．", Source: sessionMemorySourceFile},
+	})
+
+	want := []string{"src/MAE_testcase/", "src/AE_pytorch.py", "src/MAE_pytorch.py"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("allowlist = %#v, want %#v", got, want)
+	}
+}
+
 func TestNewModelAutoloadsDefaultRememberFile(t *testing.T) {
 	t.Setenv("VIRGIL_REMEMBER_FILE", "")
 	root := t.TempDir()
