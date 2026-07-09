@@ -23,6 +23,9 @@ import (
 )
 
 const doFlowMaxContinuationWindows = 12
+const defaultRememberFile = ".virgil/remember.md"
+const sessionMemorySourceManual = "manual"
+const sessionMemorySourceFile = "file"
 
 type indexerTickMsg struct{}
 
@@ -822,24 +825,24 @@ func formatInputHistory(history []string, limit int) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func formatSessionMemory(notes []string) string {
+func formatSessionMemory(notes []sessionMemoryNote) string {
 	if len(notes) == 0 {
-		return "Session memory is empty. Use /remember <note> to pin something for this session."
+		return "Session memory is empty. Use /remember <note> to pin something for this session, or edit .virgil/remember.md and run /remember --reload."
 	}
 	var b strings.Builder
 	b.WriteString("Session memory:\n")
 	for i, note := range notes {
-		fmt.Fprintf(&b, "%d. %s\n", i+1, note)
+		fmt.Fprintf(&b, "%d. [%s] %s\n", i+1, note.Source, note.Text)
 	}
-	b.WriteString("\nUse /forget <number> to remove one, or /forget all to clear them.")
+	b.WriteString("\nUse /forget <number> to remove one, /forget all to clear them, or /remember --reload to reload file notes.")
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func sessionMemoryMessage(notes []string) llm.Message {
+func sessionMemoryMessage(notes []sessionMemoryNote) llm.Message {
 	var b strings.Builder
 	b.WriteString("Session memory pinned by the user. Treat these as active requirements for the rest of this session unless the user explicitly changes or removes them:\n")
 	for i, note := range notes {
-		fmt.Fprintf(&b, "%d. %s\n", i+1, note)
+		fmt.Fprintf(&b, "%d. %s\n", i+1, note.Text)
 	}
 	return llm.Message{Role: "system", Content: strings.TrimRight(b.String(), "\n")}
 }
@@ -862,6 +865,88 @@ func (m Model) historyWithSessionMemory() []llm.Message {
 	history = append(history, sessionMemoryMessage(m.sessionMemory))
 	history = append(history, m.history...)
 	return history
+}
+
+func resolveRememberFile(workspaceRoot string, override string) (string, bool) {
+	if path := strings.TrimSpace(override); path != "" {
+		return resolveWorkspacePath(workspaceRoot, path), true
+	}
+	if path := strings.TrimSpace(os.Getenv("VIRGIL_REMEMBER_FILE")); path != "" {
+		return resolveWorkspacePath(workspaceRoot, path), true
+	}
+	return resolveWorkspacePath(workspaceRoot, defaultRememberFile), false
+}
+
+func resolveWorkspacePath(workspaceRoot string, path string) string {
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	if workspaceRoot == "" {
+		return filepath.Clean(path)
+	}
+	return filepath.Join(workspaceRoot, path)
+}
+
+func parseRememberFile(content string) []string {
+	lines := strings.Split(content, "\n")
+	notes := make([]string, 0, len(lines))
+	seen := map[string]bool{}
+	for _, line := range lines {
+		note := strings.TrimSpace(line)
+		if note == "" || strings.HasPrefix(note, "#") {
+			continue
+		}
+		if strings.HasPrefix(note, "- ") || strings.HasPrefix(note, "* ") {
+			note = strings.TrimSpace(note[2:])
+		}
+		if note == "" || seen[note] {
+			continue
+		}
+		seen[note] = true
+		notes = append(notes, note)
+	}
+	return notes
+}
+
+func (m *Model) reloadSessionMemoryFromDefaultFile(reportMissingDefault bool) (string, error) {
+	path, explicit := resolveRememberFile(m.workspaceRoot, "")
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) && !explicit && !reportMissingDefault {
+			m.replaceFileSessionMemory(nil)
+			return path, nil
+		}
+		return path, err
+	}
+	return m.reloadSessionMemoryFromFile(path)
+}
+
+func (m *Model) reloadSessionMemoryFromFile(path string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return path, err
+	}
+	m.replaceFileSessionMemory(parseRememberFile(string(content)))
+	return path, nil
+}
+
+func (m *Model) replaceFileSessionMemory(fileNotes []string) {
+	out := make([]sessionMemoryNote, 0, len(m.sessionMemory)+len(fileNotes))
+	seen := map[string]bool{}
+	for _, note := range m.sessionMemory {
+		if note.Source == sessionMemorySourceFile || strings.TrimSpace(note.Text) == "" || seen[note.Text] {
+			continue
+		}
+		seen[note.Text] = true
+		out = append(out, note)
+	}
+	for _, text := range fileNotes {
+		if text == "" || seen[text] {
+			continue
+		}
+		seen[text] = true
+		out = append(out, sessionMemoryNote{Text: text, Source: sessionMemorySourceFile})
+	}
+	m.sessionMemory = out
 }
 
 func (m Model) historyWithoutSessionMemory(history []llm.Message) []llm.Message {
@@ -1110,7 +1195,27 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		if note == "" {
 			return m, m.printSystemDisplayOnly(formatSessionMemory(m.sessionMemory))
 		}
-		m.sessionMemory = append(m.sessionMemory, note)
+		if args[0] == "--reload" {
+			pathArg := ""
+			if len(args) > 2 {
+				return m, m.printSystemDisplayOnly("Usage: /remember --reload [path]")
+			}
+			if len(args) == 2 {
+				pathArg = args[1]
+			}
+			path, explicit := resolveRememberFile(m.workspaceRoot, pathArg)
+			var err error
+			if explicit {
+				_, err = m.reloadSessionMemoryFromFile(path)
+			} else {
+				_, err = m.reloadSessionMemoryFromDefaultFile(true)
+			}
+			if err != nil {
+				return m, m.printSystemDisplayOnly(fmt.Sprintf("Failed to reload session memory from %s: %v", path, err))
+			}
+			return m, m.printSystemDisplayOnly(fmt.Sprintf("Reloaded session memory from %s.\n\n%s", path, formatSessionMemory(m.sessionMemory)))
+		}
+		m.sessionMemory = append(m.sessionMemory, sessionMemoryNote{Text: note, Source: sessionMemorySourceManual})
 		return m, m.printSystemDisplayOnly(fmt.Sprintf("Remembered for this session: %s", note))
 
 	case "/forget":
@@ -1530,6 +1635,8 @@ Available slash commands:
   /shrink          Compress older context into a summary (auto at 50%% or 20+ messages)
   /history [n]     Show input history or restore entry n into the input box
   /remember <note> Pin a note into session memory for future agent calls
+  /remember --reload [path]
+                   Reload file notes from .virgil/remember.md or VIRGIL_REMEMBER_FILE
   /forget <n|all>  Remove one or all session memory notes
   /clear           Clear context and start a new session
   /debug-context   Load debug context JSON and attach it to chat and /task
@@ -1576,6 +1683,8 @@ Available slash commands:
   /history [n]     Show input history or restore entry n into the input box
   /last            Restore the previous input into the input box
   /remember <note> Pin a note into session memory for future agent calls
+  /remember --reload [path]
+                   Reload file notes from .virgil/remember.md or VIRGIL_REMEMBER_FILE
   /forget <n|all>  Remove one or all session memory notes
   /confirm-run     Approve pending shell command
   /reject-run      Reject pending shell command

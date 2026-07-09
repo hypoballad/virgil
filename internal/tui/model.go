@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"log"
 	"strings"
 	"time"
 
@@ -121,7 +122,7 @@ type Model struct {
 	fullPowerCommands         bool
 	planMode                  bool // 追加: プランモード状態
 	debugContext              *debugctx.Context
-	sessionMemory             []string
+	sessionMemory             []sessionMemoryNote
 	vmaxAvailable             bool
 	vmaxArmed                 bool
 	vmaxActive                bool
@@ -156,6 +157,11 @@ type pendingRunCommand struct {
 	command     string
 	dir         string
 	requestedAt time.Time
+}
+
+type sessionMemoryNote struct {
+	Text   string
+	Source string
 }
 
 type pendingAction struct {
@@ -257,6 +263,9 @@ func NewModel(agentInst *agent.Agent, repo *repository.Repository, shadowRepo *s
 		planMode:      true,
 		agentTimeout:  time.Duration(agentTimeoutMinutes) * time.Minute,
 		runTimeout:    time.Duration(runTimeoutMinutes) * time.Minute,
+	}
+	if path, err := m.reloadSessionMemoryFromDefaultFile(false); err != nil {
+		log.Printf("warning: failed to read session memory file %q: %v", path, err)
 	}
 	m.setInputSize(defaultInputOuterWidth)
 

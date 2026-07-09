@@ -127,7 +127,7 @@ Common commands:
 - `/reindex`: rebuild the symbol and call index in the background
 - `/callers <name>`: show incoming calls for a function or method
 - `/callgraph <name> [depth]`: show a call graph from a function or method
-- `/remember <note>`: pin a note into session memory for future agent calls
+- `/remember <note>`: pin a note into session memory for future agent calls; `/remember --reload [path]` reloads file notes from `.virgil/remember.md` or `VIRGIL_REMEMBER_FILE`
 - `/forget <number|all>`: remove pinned session memory notes
 - `/debug-context [question]`: attach exported VS Code debugger context
 - `/debug-context clear`: clear the active debug context

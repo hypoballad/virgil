@@ -752,18 +752,23 @@ pytest ではなく python -m unittest で確認してください
 
 - なし: 登録済みのセッションメモリを表示します
 - `note`: 現在のセッション中に保持したい自由記述のメモ
+- `--reload [path]`: 現在のセッション中にファイル由来メモを再読み込みします
 
 挙動:
 
 - `/remember <note>` はメモをセッションメモリに登録します。
+- `/remember --reload` は `VIRGIL_REMEMBER_FILE`、未設定なら `.virgil/remember.md` からファイル由来メモを再読み込みします。
+- `/remember --reload <path>` は指定パスからファイル由来メモを再読み込みします。相対パスは workspace root 基準です。
 - 登録されたメモは、以後の通常チャット、`/task`、継続実行、`/btw` のエージェント呼び出しに system message として注入されます。
 - コマンド自体は LLM を呼び出さず、ユーザーターンも追加しません。
+- remember ファイルが存在する場合は起動時にも読み込まれます。`/forget` と `/clear` はファイルを変更せず、次回 reload でファイル由来メモは復元できます。
 - セッションメモリはプロセス内のみで保持され、`/clear` で消去されます。
 
 使用方法:
 
 ```text
 /remember 最終報告は必ず日本語で返してください。
+/remember --reload
 /remember
 ```
 

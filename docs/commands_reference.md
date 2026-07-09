@@ -752,18 +752,23 @@ Arguments:
 
 - none: show pinned session memory notes
 - `note`: free-form text to keep active for the current session
+- `--reload [path]`: reload file-backed notes during the current session
 
 Behavior:
 
 - `/remember <note>` pins the note into session memory.
+- `/remember --reload` reloads file-backed notes from `VIRGIL_REMEMBER_FILE`, or `.virgil/remember.md` when the env var is unset.
+- `/remember --reload <path>` reloads file-backed notes from the given path. Relative paths are resolved from the workspace root.
 - Pinned notes are injected into future normal chat, `/task`, continuation, and `/btw` agent calls as a system message.
 - The command itself does not call the LLM and does not add a user turn.
+- File-backed notes are loaded at startup when the remember file exists. `/forget` and `/clear` do not modify the file; the next reload can restore file-backed notes.
 - Session memory is process-local and is cleared by `/clear`.
 
 Usage:
 
 ```text
 /remember Always answer final reports in Japanese.
+/remember --reload
 /remember
 ```
 

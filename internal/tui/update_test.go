@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -203,7 +205,7 @@ func TestRememberCommandPinsSessionMemory(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected display command")
 	}
-	if len(got.sessionMemory) != 1 || got.sessionMemory[0] != "prefer small scoped edits" {
+	if len(got.sessionMemory) != 1 || got.sessionMemory[0].Text != "prefer small scoped edits" || got.sessionMemory[0].Source != sessionMemorySourceManual {
 		t.Fatalf("sessionMemory = %#v", got.sessionMemory)
 	}
 	if len(got.history) != 0 {
@@ -213,7 +215,10 @@ func TestRememberCommandPinsSessionMemory(t *testing.T) {
 
 func TestRememberWithoutNoteListsSessionMemory(t *testing.T) {
 	m := testModel()
-	m.sessionMemory = []string{"first", "second"}
+	m.sessionMemory = []sessionMemoryNote{
+		{Text: "first", Source: sessionMemorySourceManual},
+		{Text: "second", Source: sessionMemorySourceFile},
+	}
 
 	updated, cmd := m.handleSlashCommand("/remember")
 	got := updated.(*Model)
@@ -228,13 +233,87 @@ func TestRememberWithoutNoteListsSessionMemory(t *testing.T) {
 	}
 }
 
+func TestRememberReloadDefaultFileReplacesFileNotesAndKeepsManual(t *testing.T) {
+	t.Setenv("VIRGIL_REMEMBER_FILE", "")
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".virgil"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".virgil", "remember.md")
+	if err := os.WriteFile(path, []byte("# notes\n- file first\n* file second\nmanual duplicate\nfile first\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := testModel()
+	m.workspaceRoot = root
+	m.sessionMemory = []sessionMemoryNote{
+		{Text: "manual keep", Source: sessionMemorySourceManual},
+		{Text: "manual duplicate", Source: sessionMemorySourceManual},
+		{Text: "old file", Source: sessionMemorySourceFile},
+	}
+
+	updated, cmd := m.handleSlashCommand("/remember --reload")
+	got := updated.(*Model)
+	if cmd == nil {
+		t.Fatal("expected display command")
+	}
+	want := []sessionMemoryNote{
+		{Text: "manual keep", Source: sessionMemorySourceManual},
+		{Text: "manual duplicate", Source: sessionMemorySourceManual},
+		{Text: "file first", Source: sessionMemorySourceFile},
+		{Text: "file second", Source: sessionMemorySourceFile},
+	}
+	if len(got.sessionMemory) != len(want) {
+		t.Fatalf("sessionMemory len = %d, want %d: %#v", len(got.sessionMemory), len(want), got.sessionMemory)
+	}
+	for i := range want {
+		if got.sessionMemory[i] != want[i] {
+			t.Fatalf("sessionMemory[%d] = %#v, want %#v; all=%#v", i, got.sessionMemory[i], want[i], got.sessionMemory)
+		}
+	}
+}
+
+func TestRememberReloadExplicitPath(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "notes.md")
+	if err := os.WriteFile(path, []byte("- explicit note\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := testModel()
+	m.workspaceRoot = root
+
+	updated, _ := m.handleSlashCommand("/remember --reload notes.md")
+	got := updated.(*Model)
+	if len(got.sessionMemory) != 1 || got.sessionMemory[0].Text != "explicit note" || got.sessionMemory[0].Source != sessionMemorySourceFile {
+		t.Fatalf("sessionMemory = %#v", got.sessionMemory)
+	}
+}
+
+func TestNewModelAutoloadsDefaultRememberFile(t *testing.T) {
+	t.Setenv("VIRGIL_REMEMBER_FILE", "")
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".virgil"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".virgil", "remember.md"), []byte("- auto note\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewModel(agent.New(nil, nil), nil, nil, nil, "session", root, "model", "", 12000, 5, 30)
+	if len(m.sessionMemory) != 1 || m.sessionMemory[0].Text != "auto note" || m.sessionMemory[0].Source != sessionMemorySourceFile {
+		t.Fatalf("sessionMemory = %#v", m.sessionMemory)
+	}
+}
+
 func TestForgetCommandRemovesSessionMemory(t *testing.T) {
 	m := testModel()
-	m.sessionMemory = []string{"first", "second"}
+	m.sessionMemory = []sessionMemoryNote{
+		{Text: "first", Source: sessionMemorySourceManual},
+		{Text: "second", Source: sessionMemorySourceFile},
+	}
 
 	updated, _ := m.handleSlashCommand("/forget 1")
 	got := updated.(*Model)
-	if len(got.sessionMemory) != 1 || got.sessionMemory[0] != "second" {
+	if len(got.sessionMemory) != 1 || got.sessionMemory[0].Text != "second" {
 		t.Fatalf("sessionMemory = %#v", got.sessionMemory)
 	}
 
@@ -251,7 +330,7 @@ func TestHistoryWithSessionMemoryInjectsSystemNoteWithoutMutatingHistory(t *test
 		{Role: "system", Content: "primary"},
 		{Role: "user", Content: "hello"},
 	}
-	m.sessionMemory = []string{"always answer in Japanese"}
+	m.sessionMemory = []sessionMemoryNote{{Text: "always answer in Japanese", Source: sessionMemorySourceManual}}
 
 	got := m.historyWithSessionMemory()
 	if len(got) != 3 {
@@ -270,7 +349,7 @@ func TestHistoryWithSessionMemoryInjectsSystemNoteWithoutMutatingHistory(t *test
 
 func TestHistoryWithoutSessionMemoryStripsInjectedNote(t *testing.T) {
 	m := testModel()
-	injected := sessionMemoryMessage([]string{"keep this active"})
+	injected := sessionMemoryMessage([]sessionMemoryNote{{Text: "keep this active", Source: sessionMemorySourceManual}})
 	got := m.historyWithoutSessionMemory([]llm.Message{
 		{Role: "system", Content: "primary"},
 		injected,
