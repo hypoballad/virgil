@@ -127,9 +127,9 @@ Common commands:
 - `/reindex`: rebuild the symbol and call index in the background
 - `/callers <name>`: show incoming calls for a function or method
 - `/callgraph <name> [depth]`: show a call graph from a function or method
-- `/remember <note>`: pin a note into session memory for future agent calls; `/remember --reload [path]` reloads file notes from `.virgil/remember.md` or `VIRGIL_REMEMBER_FILE`
-- `/remember edit-allow: <paths>`: enforce a hard allowlist for mutating file tools
+- `/remember <note>`: pin a note into session memory for future agent calls
 - `/forget <number|all>`: remove pinned session memory notes
+- `/editallow [--reload [path]]`: show or reload the mutating file tool allowlist from `.virgil/editallow` or `VIRGIL_EDITALLOW_FILE`
 - `/debug-context [question]`: attach exported VS Code debugger context
 - `/debug-context clear`: clear the active debug context
 - `/rewind`: list recent shadow snapshots
@@ -137,6 +137,7 @@ Common commands:
 - `/clear`: start a fresh session
 
 The full command reference is in [docs/commands_reference.md](docs/commands_reference.md).
+Japanese usage notes for `/remember` and `/editallow` are in [docs/remember_editallow-ja.md](docs/remember_editallow-ja.md).
 
 ## Large Task Workflow
 
@@ -221,6 +222,7 @@ Format changed Go files with `gofmt`.
 ## Documentation
 
 - [docs/commands_reference.md](docs/commands_reference.md): slash command details
+- [docs/remember_editallow-ja.md](docs/remember_editallow-ja.md): Japanese usage notes for session memory and edit allowlists
 - [docs/openai_api_guide.md](docs/openai_api_guide.md): local and OpenAI-compatible backend setup
 - [docs/task_breakdown_workflow.md](docs/task_breakdown_workflow.md): large-task workflow
 - [docs/specs_reference_workflow.md](docs/specs_reference_workflow.md): workspace spec convention

@@ -43,6 +43,7 @@ var coreSlashCommands = []string{
 	"/history",
 	"/remember",
 	"/forget",
+	"/editallow",
 	"/clear",
 	"/debug-context",
 	"/vmax",
@@ -77,6 +78,7 @@ var allSlashCommands = []string{
 	"/last",
 	"/remember",
 	"/forget",
+	"/editallow",
 	"/btw",
 	"/help",
 }
@@ -123,6 +125,7 @@ type Model struct {
 	planMode                  bool // 追加: プランモード状態
 	debugContext              *debugctx.Context
 	sessionMemory             []sessionMemoryNote
+	editAllowlist             []string
 	vmaxAvailable             bool
 	vmaxArmed                 bool
 	vmaxActive                bool
@@ -264,8 +267,8 @@ func NewModel(agentInst *agent.Agent, repo *repository.Repository, shadowRepo *s
 		agentTimeout:  time.Duration(agentTimeoutMinutes) * time.Minute,
 		runTimeout:    time.Duration(runTimeoutMinutes) * time.Minute,
 	}
-	if path, err := m.reloadSessionMemoryFromDefaultFile(false); err != nil {
-		log.Printf("warning: failed to read session memory file %q: %v", path, err)
+	if path, err := m.reloadEditAllowlistFromDefaultFile(false); err != nil {
+		log.Printf("warning: failed to read editallow file %q: %v", path, err)
 	}
 	m.setInputSize(defaultInputOuterWidth)
 

@@ -752,32 +752,57 @@ pytest ではなく python -m unittest で確認してください
 
 - なし: 登録済みのセッションメモリを表示します
 - `note`: 現在のセッション中に保持したい自由記述のメモ
-- `--reload [path]`: 現在のセッション中にファイル由来メモを再読み込みします
 
 挙動:
 
 - `/remember <note>` はメモをセッションメモリに登録します。
-- `/remember --reload` は `VIRGIL_REMEMBER_FILE`、未設定なら `.virgil/remember.md` からファイル由来メモを再読み込みします。
-- `/remember --reload <path>` は指定パスからファイル由来メモを再読み込みします。相対パスは workspace root 基準です。
-- `edit-allow:` で始まるメモは、書き込み系ツールに対する強制的な編集許可リストとして扱われます。例: `edit-allow: src/MAE_testcase/, src/AE_pytorch.py`
-- `VIRGIL_EDIT_ALLOWLIST` でも同じ編集許可リストをカンマ区切りで指定できます。
 - 登録されたメモは、以後の通常チャット、`/task`、継続実行、`/btw` のエージェント呼び出しに system message として注入されます。
 - コマンド自体は LLM を呼び出さず、ユーザーターンも追加しません。
-- remember ファイルが存在する場合は起動時にも読み込まれます。`/forget` と `/clear` はファイルを変更せず、次回 reload でファイル由来メモは復元できます。
 - セッションメモリはプロセス内のみで保持され、`/clear` で消去されます。
 
 使用方法:
 
 ```text
 /remember 最終報告は必ず日本語で返してください。
-/remember edit-allow: src/MAE_testcase/, src/AE_pytorch.py, src/MAE_pytorch.py
-/remember --reload
 /remember
 ```
 
 関連ファイル:
 
 - `internal/tui/update.go`
+
+### `/editallow [--reload [path]]`
+
+引数:
+
+- なし: ファイル/env から読み込まれている現在の編集許可リストを表示します
+- `--reload`: `.virgil/editallow`、または `VIRGIL_EDITALLOW_FILE` が設定されていればそのファイルを再読み込みします
+- `--reload <path>`: 指定した allowlist ファイルを再読み込みします。相対パスは workspace root 基準です
+
+挙動:
+
+- `write_file`、`edit_file`、`edit_with_pattern` などの書き込み系ツールに対して、強制的な編集許可リストを適用します。
+- 読み取り専用ツールは editallow ではブロックされません。
+- 既定ファイルは `.virgil/editallow` です。存在する場合は起動時に自動読み込みされます。
+- `VIRGIL_EDIT_ALLOWLIST` でも同じ許可リストをカンマ区切りで指定できます。
+- ディレクトリは `/` で終えてください。
+
+使用方法:
+
+```text
+/editallow
+/editallow --reload
+/editallow --reload policy/editallow
+```
+
+`.virgil/editallow` の例:
+
+```text
+# 1行1パス、またはカンマ区切り
+src/MAE_testcase/
+src/AE_pytorch.py
+src/MAE_pytorch.py
+```
 
 ### `/forget <number|all>`
 
@@ -865,6 +890,7 @@ Unknown command: <cmd>. Type /help for available commands.
 - `/last`
 - `/remember`
 - `/forget`
+- `/editallow`
 - `/confirm-run`
 - `/reject-run`
 - `/btw`

@@ -752,32 +752,57 @@ Arguments:
 
 - none: show pinned session memory notes
 - `note`: free-form text to keep active for the current session
-- `--reload [path]`: reload file-backed notes during the current session
 
 Behavior:
 
 - `/remember <note>` pins the note into session memory.
-- `/remember --reload` reloads file-backed notes from `VIRGIL_REMEMBER_FILE`, or `.virgil/remember.md` when the env var is unset.
-- `/remember --reload <path>` reloads file-backed notes from the given path. Relative paths are resolved from the workspace root.
-- A note starting with `edit-allow:` activates a hard edit allowlist for mutating tools. Example: `edit-allow: src/MAE_testcase/, src/AE_pytorch.py`.
-- `VIRGIL_EDIT_ALLOWLIST` can also define the same hard edit allowlist as comma-separated paths.
 - Pinned notes are injected into future normal chat, `/task`, continuation, and `/btw` agent calls as a system message.
 - The command itself does not call the LLM and does not add a user turn.
-- File-backed notes are loaded at startup when the remember file exists. `/forget` and `/clear` do not modify the file; the next reload can restore file-backed notes.
 - Session memory is process-local and is cleared by `/clear`.
 
 Usage:
 
 ```text
 /remember Always answer final reports in Japanese.
-/remember edit-allow: src/MAE_testcase/, src/AE_pytorch.py, src/MAE_pytorch.py
-/remember --reload
 /remember
 ```
 
 Related files:
 
 - `internal/tui/update.go`
+
+### `/editallow [--reload [path]]`
+
+Arguments:
+
+- none: show the active edit allowlist loaded from file/env
+- `--reload`: reload `.virgil/editallow`, or `VIRGIL_EDITALLOW_FILE` when set
+- `--reload <path>`: reload the given allowlist file; relative paths are resolved from the workspace root
+
+Behavior:
+
+- Enforces a hard allowlist for mutating file tools such as `write_file`, `edit_file`, and `edit_with_pattern`.
+- Read-only tools are not blocked by the edit allowlist.
+- The default file is `.virgil/editallow`; it is auto-loaded at startup when present.
+- `VIRGIL_EDIT_ALLOWLIST` can also define the same allowlist as comma-separated paths.
+- Directories should end with `/`.
+
+Usage:
+
+```text
+/editallow
+/editallow --reload
+/editallow --reload policy/editallow
+```
+
+Example `.virgil/editallow`:
+
+```text
+# One path per line, or comma-separated paths
+src/MAE_testcase/
+src/AE_pytorch.py
+src/MAE_pytorch.py
+```
 
 ### `/forget <number|all>`
 
@@ -865,6 +890,7 @@ These are key bindings, not slash commands.
 - `/last`
 - `/remember`
 - `/forget`
+- `/editallow`
 - `/confirm-run`
 - `/reject-run`
 - `/btw`

@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -24,11 +23,8 @@ import (
 )
 
 const doFlowMaxContinuationWindows = 12
-const defaultRememberFile = ".virgil/remember.md"
+const defaultEditAllowFile = ".virgil/editallow"
 const sessionMemorySourceManual = "manual"
-const sessionMemorySourceFile = "file"
-
-var rememberPathPattern = regexp.MustCompile(`(?:^|[\s,、。:：` + "`" + `])((?:\./)?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+/?)`)
 
 type indexerTickMsg struct{}
 
@@ -524,7 +520,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastIterationLimitReached = false
 		m.debugContext = nil
 		m.sessionMemory = nil
-		m.applySessionMemoryEditAllowlist()
 		m.vmaxArmed = false
 		m.vmaxActive = false
 		m.currentRunMaxIterations = agent.MaxIterations
@@ -831,14 +826,27 @@ func formatInputHistory(history []string, limit int) string {
 
 func formatSessionMemory(notes []sessionMemoryNote) string {
 	if len(notes) == 0 {
-		return "Session memory is empty. Use /remember <note> to pin something for this session, or edit .virgil/remember.md and run /remember --reload."
+		return "Session memory is empty. Use /remember <note> to pin something for this session."
 	}
 	var b strings.Builder
 	b.WriteString("Session memory:\n")
 	for i, note := range notes {
-		fmt.Fprintf(&b, "%d. [%s] %s\n", i+1, note.Source, note.Text)
+		fmt.Fprintf(&b, "%d. %s\n", i+1, note.Text)
 	}
-	b.WriteString("\nUse /forget <number> to remove one, /forget all to clear them, or /remember --reload to reload file notes.")
+	b.WriteString("\nUse /forget <number> to remove one, or /forget all to clear them.")
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func formatEditAllowlist(paths []string) string {
+	if len(paths) == 0 {
+		return "Edit allowlist is empty. Mutating file tools are unrestricted except for protected paths. Edit .virgil/editallow and run /editallow --reload to enforce one."
+	}
+	var b strings.Builder
+	b.WriteString("Edit allowlist:\n")
+	for i, path := range paths {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, path)
+	}
+	b.WriteString("\nUse /editallow --reload [path] to reload file-backed edit restrictions.")
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -871,14 +879,14 @@ func (m Model) historyWithSessionMemory() []llm.Message {
 	return history
 }
 
-func resolveRememberFile(workspaceRoot string, override string) (string, bool) {
+func resolveEditAllowFile(workspaceRoot string, override string) (string, bool) {
 	if path := strings.TrimSpace(override); path != "" {
 		return resolveWorkspacePath(workspaceRoot, path), true
 	}
-	if path := strings.TrimSpace(os.Getenv("VIRGIL_REMEMBER_FILE")); path != "" {
+	if path := strings.TrimSpace(os.Getenv("VIRGIL_EDITALLOW_FILE")); path != "" {
 		return resolveWorkspacePath(workspaceRoot, path), true
 	}
-	return resolveWorkspacePath(workspaceRoot, defaultRememberFile), false
+	return resolveWorkspacePath(workspaceRoot, defaultEditAllowFile), false
 }
 
 func resolveWorkspacePath(workspaceRoot string, path string) string {
@@ -891,131 +899,70 @@ func resolveWorkspacePath(workspaceRoot string, path string) string {
 	return filepath.Join(workspaceRoot, path)
 }
 
-func parseRememberFile(content string) []string {
+func parseEditAllowFile(content string) []string {
 	lines := strings.Split(content, "\n")
-	notes := make([]string, 0, len(lines))
-	seen := map[string]bool{}
+	paths := make([]string, 0, len(lines))
 	for _, line := range lines {
-		note := strings.TrimSpace(line)
-		if note == "" || strings.HasPrefix(note, "#") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if strings.HasPrefix(note, "- ") || strings.HasPrefix(note, "* ") {
-			note = strings.TrimSpace(note[2:])
+		line = strings.Trim(strings.TrimSpace(line), "`")
+		lower := strings.ToLower(line)
+		switch {
+		case strings.HasPrefix(lower, "edit-allow:"):
+			paths = append(paths, parseCSVLike(strings.TrimSpace(line[len("edit-allow:"):]))...)
+		case strings.HasPrefix(lower, "edit_allow:"):
+			paths = append(paths, parseCSVLike(strings.TrimSpace(line[len("edit_allow:"):]))...)
+		default:
+			paths = append(paths, parseCSVLike(line)...)
 		}
-		if note == "" || seen[note] {
-			continue
-		}
-		seen[note] = true
-		notes = append(notes, note)
 	}
-	return notes
+	return dedupeStrings(paths)
 }
 
-func (m *Model) reloadSessionMemoryFromDefaultFile(reportMissingDefault bool) (string, error) {
-	path, explicit := resolveRememberFile(m.workspaceRoot, "")
+func (m *Model) reloadEditAllowlistFromDefaultFile(reportMissingDefault bool) (string, error) {
+	path, explicit := resolveEditAllowFile(m.workspaceRoot, "")
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) && !explicit && !reportMissingDefault {
-			m.replaceFileSessionMemory(nil)
+			m.editAllowlist = nil
+			m.applyEditAllowlist()
 			return path, nil
 		}
 		return path, err
 	}
-	return m.reloadSessionMemoryFromFile(path)
+	return m.reloadEditAllowlistFromFile(path)
 }
 
-func (m *Model) reloadSessionMemoryFromFile(path string) (string, error) {
+func (m *Model) reloadEditAllowlistFromFile(path string) (string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return path, err
 	}
-	m.replaceFileSessionMemory(parseRememberFile(string(content)))
+	m.editAllowlist = parseEditAllowFile(string(content))
+	m.applyEditAllowlist()
 	return path, nil
 }
 
-func (m *Model) replaceFileSessionMemory(fileNotes []string) {
-	out := make([]sessionMemoryNote, 0, len(m.sessionMemory)+len(fileNotes))
-	seen := map[string]bool{}
-	for _, note := range m.sessionMemory {
-		if note.Source == sessionMemorySourceFile || strings.TrimSpace(note.Text) == "" || seen[note.Text] {
-			continue
-		}
-		seen[note.Text] = true
-		out = append(out, note)
-	}
-	for _, text := range fileNotes {
-		if text == "" || seen[text] {
-			continue
-		}
-		seen[text] = true
-		out = append(out, sessionMemoryNote{Text: text, Source: sessionMemorySourceFile})
-	}
-	m.sessionMemory = out
-	m.applySessionMemoryEditAllowlist()
-}
-
-func (m *Model) applySessionMemoryEditAllowlist() {
+func (m *Model) applyEditAllowlist() {
 	if m.agent == nil {
 		return
 	}
-	paths := parseCSVLike(os.Getenv("VIRGIL_EDIT_ALLOWLIST"))
+	paths := m.currentEditAllowlist()
 	sourceParts := make([]string, 0, 2)
-	if len(paths) > 0 {
+	if len(parseCSVLike(os.Getenv("VIRGIL_EDIT_ALLOWLIST"))) > 0 {
 		sourceParts = append(sourceParts, "VIRGIL_EDIT_ALLOWLIST")
 	}
-	memoryPaths := editAllowlistFromSessionMemory(m.sessionMemory)
-	if len(memoryPaths) > 0 {
-		paths = append(paths, memoryPaths...)
-		sourceParts = append(sourceParts, "session memory")
+	if len(m.editAllowlist) > 0 {
+		sourceParts = append(sourceParts, "editallow")
 	}
 	m.agent.SetEditAllowlist(paths, strings.Join(sourceParts, " and "))
 }
 
-func editAllowlistFromSessionMemory(notes []sessionMemoryNote) []string {
-	out := make([]string, 0)
-	for _, note := range notes {
-		text := strings.TrimSpace(note.Text)
-		if text == "" {
-			continue
-		}
-		lower := strings.ToLower(text)
-		switch {
-		case strings.HasPrefix(lower, "edit-allow:"):
-			out = append(out, parseCSVLike(strings.TrimSpace(text[len("edit-allow:"):]))...)
-		case strings.HasPrefix(lower, "edit_allow:"):
-			out = append(out, parseCSVLike(strings.TrimSpace(text[len("edit_allow:"):]))...)
-		case looksLikeEditAllowlistInstruction(text):
-			out = append(out, extractWorkspacePathsFromText(text)...)
-		}
-	}
-	return dedupeStrings(out)
-}
-
-func looksLikeEditAllowlistInstruction(text string) bool {
-	return strings.Contains(text, "編集可能") ||
-		strings.Contains(text, "編集許可") ||
-		strings.Contains(text, "以外のファイルは絶対に編集しない") ||
-		strings.Contains(text, "以外は編集しない") ||
-		strings.Contains(strings.ToLower(text), "edit-allow")
-}
-
-func extractWorkspacePathsFromText(text string) []string {
-	matches := rememberPathPattern.FindAllStringSubmatch(text, -1)
-	out := make([]string, 0, len(matches))
-	for _, match := range matches {
-		if len(match) < 2 {
-			continue
-		}
-		path := strings.Trim(match[1], "`")
-		if path == "" {
-			continue
-		}
-		if strings.Contains(text, path+"配下") && !strings.HasSuffix(path, "/") {
-			path += "/"
-		}
-		out = append(out, path)
-	}
-	return dedupeStrings(out)
+func (m Model) currentEditAllowlist() []string {
+	paths := parseCSVLike(os.Getenv("VIRGIL_EDIT_ALLOWLIST"))
+	paths = append(paths, m.editAllowlist...)
+	return dedupeStrings(paths)
 }
 
 func parseCSVLike(text string) []string {
@@ -1297,28 +1244,7 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		if note == "" {
 			return m, m.printSystemDisplayOnly(formatSessionMemory(m.sessionMemory))
 		}
-		if args[0] == "--reload" {
-			pathArg := ""
-			if len(args) > 2 {
-				return m, m.printSystemDisplayOnly("Usage: /remember --reload [path]")
-			}
-			if len(args) == 2 {
-				pathArg = args[1]
-			}
-			path, explicit := resolveRememberFile(m.workspaceRoot, pathArg)
-			var err error
-			if explicit {
-				_, err = m.reloadSessionMemoryFromFile(path)
-			} else {
-				_, err = m.reloadSessionMemoryFromDefaultFile(true)
-			}
-			if err != nil {
-				return m, m.printSystemDisplayOnly(fmt.Sprintf("Failed to reload session memory from %s: %v", path, err))
-			}
-			return m, m.printSystemDisplayOnly(fmt.Sprintf("Reloaded session memory from %s.\n\n%s", path, formatSessionMemory(m.sessionMemory)))
-		}
 		m.sessionMemory = append(m.sessionMemory, sessionMemoryNote{Text: note, Source: sessionMemorySourceManual})
-		m.applySessionMemoryEditAllowlist()
 		return m, m.printSystemDisplayOnly(fmt.Sprintf("Remembered for this session: %s", note))
 
 	case "/forget":
@@ -1328,7 +1254,6 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		if strings.EqualFold(args[0], "all") {
 			count := len(m.sessionMemory)
 			m.sessionMemory = nil
-			m.applySessionMemoryEditAllowlist()
 			return m, m.printSystemDisplayOnly(fmt.Sprintf("Forgot %d session note(s).", count))
 		}
 		n, err := strconv.Atoi(args[0])
@@ -1337,14 +1262,35 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		}
 		removed := m.sessionMemory[n-1]
 		m.sessionMemory = append(m.sessionMemory[:n-1], m.sessionMemory[n:]...)
-		m.applySessionMemoryEditAllowlist()
 		return m, m.printSystemDisplayOnly(fmt.Sprintf("Forgot session note %d: %s", n, removed))
+
+	case "/editallow":
+		if len(args) == 0 {
+			return m, m.printSystemDisplayOnly(formatEditAllowlist(m.currentEditAllowlist()))
+		}
+		if args[0] != "--reload" || len(args) > 2 {
+			return m, m.printSystemDisplayOnly("Usage: /editallow [--reload [path]]")
+		}
+		pathArg := ""
+		if len(args) == 2 {
+			pathArg = args[1]
+		}
+		path, explicit := resolveEditAllowFile(m.workspaceRoot, pathArg)
+		var err error
+		if explicit {
+			_, err = m.reloadEditAllowlistFromFile(path)
+		} else {
+			_, err = m.reloadEditAllowlistFromDefaultFile(true)
+		}
+		if err != nil {
+			return m, m.printSystemDisplayOnly(fmt.Sprintf("Failed to reload edit allowlist from %s: %v", path, err))
+		}
+		return m, m.printSystemDisplayOnly(fmt.Sprintf("Reloaded edit allowlist from %s.\n\n%s", path, formatEditAllowlist(m.currentEditAllowlist())))
 
 	case "/clear":
 		m.awaitingContinuation = false
 		m.debugContext = nil
 		m.sessionMemory = nil
-		m.applySessionMemoryEditAllowlist()
 		m.vmaxArmed = false
 		m.vmaxActive = false
 		return m, func() tea.Msg {
@@ -1741,11 +1687,9 @@ Available slash commands:
   /shrink          Compress older context into a summary (auto at 50%% or 20+ messages)
   /history [n]     Show input history or restore entry n into the input box
   /remember <note> Pin a note into session memory for future agent calls
-  /remember --reload [path]
-                   Reload file notes from .virgil/remember.md or VIRGIL_REMEMBER_FILE
-  /remember edit-allow: <paths>
-                   Enforce a hard allowlist for mutating file tools
   /forget <n|all>  Remove one or all session memory notes
+  /editallow [--reload [path]]
+                   Show or reload mutating file tool allowlist from .virgil/editallow
   /clear           Clear context and start a new session
   /debug-context   Load debug context JSON and attach it to chat and /task
   /vmax            Arm one-shot VMAX mode when started with --dangerous-vmax
@@ -1791,11 +1735,9 @@ Available slash commands:
   /history [n]     Show input history or restore entry n into the input box
   /last            Restore the previous input into the input box
   /remember <note> Pin a note into session memory for future agent calls
-  /remember --reload [path]
-                   Reload file notes from .virgil/remember.md or VIRGIL_REMEMBER_FILE
-  /remember edit-allow: <paths>
-                   Enforce a hard allowlist for mutating file tools
   /forget <n|all>  Remove one or all session memory notes
+  /editallow [--reload [path]]
+                   Show or reload mutating file tool allowlist from .virgil/editallow
   /confirm-run     Approve pending shell command
   /reject-run      Reject pending shell command
   <guidance>       While a shell command is pending, reject it and send guidance

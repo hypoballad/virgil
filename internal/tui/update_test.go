@@ -173,7 +173,7 @@ func TestSlashCommandHelpIsFilteredByDefault(t *testing.T) {
 	m := testModel()
 	help := m.slashCommandHelp()
 
-	for _, want := range []string{"/rewind", "/task <task>", "/tasks <path>", "/do <id>", "/breakdown", "/breakdown-last", "/copy-last", "/btw <task>", "/reindex", "/shrink", "/remember <note>", "/forget <n|all>", "/debug-context", "/vmax", "virgil fullpower"} {
+	for _, want := range []string{"/rewind", "/task <task>", "/tasks <path>", "/do <id>", "/breakdown", "/breakdown-last", "/copy-last", "/btw <task>", "/reindex", "/shrink", "/remember <note>", "/forget <n|all>", "/editallow", "/debug-context", "/vmax", "virgil fullpower"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("default help missing %q: %s", want, help)
 		}
@@ -190,7 +190,7 @@ func TestSlashCommandHelpShowsAllInFullPower(t *testing.T) {
 	m.SetFullPowerCommands(true)
 	help := m.slashCommandHelp()
 
-	for _, want := range []string{"/rewind", "/reindex", "/debug-context", "/last", "/remember <note>", "/forget <n|all>", "/continue", "/unstuck", "/abort"} {
+	for _, want := range []string{"/rewind", "/reindex", "/debug-context", "/last", "/remember <note>", "/forget <n|all>", "/editallow", "/continue", "/unstuck", "/abort"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("fullpower help missing %q: %s", want, help)
 		}
@@ -217,7 +217,7 @@ func TestRememberWithoutNoteListsSessionMemory(t *testing.T) {
 	m := testModel()
 	m.sessionMemory = []sessionMemoryNote{
 		{Text: "first", Source: sessionMemorySourceManual},
-		{Text: "second", Source: sessionMemorySourceFile},
+		{Text: "second", Source: sessionMemorySourceManual},
 	}
 
 	updated, cmd := m.handleSlashCommand("/remember")
@@ -233,96 +233,62 @@ func TestRememberWithoutNoteListsSessionMemory(t *testing.T) {
 	}
 }
 
-func TestRememberReloadDefaultFileReplacesFileNotesAndKeepsManual(t *testing.T) {
-	t.Setenv("VIRGIL_REMEMBER_FILE", "")
+func TestEditAllowReloadDefaultFile(t *testing.T) {
+	t.Setenv("VIRGIL_EDITALLOW_FILE", "")
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".virgil"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, ".virgil", "remember.md")
-	if err := os.WriteFile(path, []byte("# notes\n- file first\n* file second\nmanual duplicate\nfile first\n"), 0600); err != nil {
+	path := filepath.Join(root, ".virgil", "editallow")
+	if err := os.WriteFile(path, []byte("# edit policy\nsrc/MAE_testcase/\nsrc/AE_pytorch.py, src/MAE_pytorch.py\nsrc/AE_pytorch.py\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	m := testModel()
 	m.workspaceRoot = root
-	m.sessionMemory = []sessionMemoryNote{
-		{Text: "manual keep", Source: sessionMemorySourceManual},
-		{Text: "manual duplicate", Source: sessionMemorySourceManual},
-		{Text: "old file", Source: sessionMemorySourceFile},
-	}
 
-	updated, cmd := m.handleSlashCommand("/remember --reload")
+	updated, cmd := m.handleSlashCommand("/editallow --reload")
 	got := updated.(*Model)
 	if cmd == nil {
 		t.Fatal("expected display command")
 	}
-	want := []sessionMemoryNote{
-		{Text: "manual keep", Source: sessionMemorySourceManual},
-		{Text: "manual duplicate", Source: sessionMemorySourceManual},
-		{Text: "file first", Source: sessionMemorySourceFile},
-		{Text: "file second", Source: sessionMemorySourceFile},
-	}
-	if len(got.sessionMemory) != len(want) {
-		t.Fatalf("sessionMemory len = %d, want %d: %#v", len(got.sessionMemory), len(want), got.sessionMemory)
-	}
+	want := []string{"src/MAE_testcase/", "src/AE_pytorch.py", "src/MAE_pytorch.py"}
 	for i := range want {
-		if got.sessionMemory[i] != want[i] {
-			t.Fatalf("sessionMemory[%d] = %#v, want %#v; all=%#v", i, got.sessionMemory[i], want[i], got.sessionMemory)
+		if i >= len(got.editAllowlist) || got.editAllowlist[i] != want[i] {
+			t.Fatalf("editAllowlist = %#v, want %#v", got.editAllowlist, want)
 		}
 	}
 }
 
-func TestRememberReloadExplicitPath(t *testing.T) {
+func TestEditAllowReloadExplicitPath(t *testing.T) {
 	root := t.TempDir()
-	path := filepath.Join(root, "notes.md")
-	if err := os.WriteFile(path, []byte("- explicit note\n"), 0600); err != nil {
+	path := filepath.Join(root, "editallow")
+	if err := os.WriteFile(path, []byte("edit-allow: src/MAE_testcase/, src/AE_pytorch.py\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	m := testModel()
 	m.workspaceRoot = root
 
-	updated, _ := m.handleSlashCommand("/remember --reload notes.md")
+	updated, _ := m.handleSlashCommand("/editallow --reload editallow")
 	got := updated.(*Model)
-	if len(got.sessionMemory) != 1 || got.sessionMemory[0].Text != "explicit note" || got.sessionMemory[0].Source != sessionMemorySourceFile {
-		t.Fatalf("sessionMemory = %#v", got.sessionMemory)
+	want := []string{"src/MAE_testcase/", "src/AE_pytorch.py"}
+	if strings.Join(got.editAllowlist, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("editAllowlist = %#v, want %#v", got.editAllowlist, want)
 	}
 }
 
-func TestEditAllowlistFromSessionMemorySupportsDirective(t *testing.T) {
-	got := editAllowlistFromSessionMemory([]sessionMemoryNote{
-		{Text: "edit-allow: src/MAE_testcase/, src/AE_pytorch.py, src/MAE_pytorch.py", Source: sessionMemorySourceFile},
-	})
-
-	want := []string{"src/MAE_testcase/", "src/AE_pytorch.py", "src/MAE_pytorch.py"}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("allowlist = %#v, want %#v", got, want)
-	}
-}
-
-func TestEditAllowlistFromSessionMemoryExtractsJapaneseRestriction(t *testing.T) {
-	got := editAllowlistFromSessionMemory([]sessionMemoryNote{
-		{Text: "src/MAE_testcase配下 , src/AE_pytorch.py , src/MAE_pytorch.py 以外のファイルは絶対に編集しないでください．", Source: sessionMemorySourceFile},
-	})
-
-	want := []string{"src/MAE_testcase/", "src/AE_pytorch.py", "src/MAE_pytorch.py"}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("allowlist = %#v, want %#v", got, want)
-	}
-}
-
-func TestNewModelAutoloadsDefaultRememberFile(t *testing.T) {
-	t.Setenv("VIRGIL_REMEMBER_FILE", "")
+func TestNewModelAutoloadsDefaultEditAllowFile(t *testing.T) {
+	t.Setenv("VIRGIL_EDITALLOW_FILE", "")
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".virgil"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".virgil", "remember.md"), []byte("- auto note\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".virgil", "editallow"), []byte("src/MAE_testcase/\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
 	m := NewModel(agent.New(nil, nil), nil, nil, nil, "session", root, "model", "", 12000, 5, 30)
-	if len(m.sessionMemory) != 1 || m.sessionMemory[0].Text != "auto note" || m.sessionMemory[0].Source != sessionMemorySourceFile {
-		t.Fatalf("sessionMemory = %#v", m.sessionMemory)
+	if len(m.editAllowlist) != 1 || m.editAllowlist[0] != "src/MAE_testcase/" {
+		t.Fatalf("editAllowlist = %#v", m.editAllowlist)
 	}
 }
 
@@ -330,7 +296,7 @@ func TestForgetCommandRemovesSessionMemory(t *testing.T) {
 	m := testModel()
 	m.sessionMemory = []sessionMemoryNote{
 		{Text: "first", Source: sessionMemorySourceManual},
-		{Text: "second", Source: sessionMemorySourceFile},
+		{Text: "second", Source: sessionMemorySourceManual},
 	}
 
 	updated, _ := m.handleSlashCommand("/forget 1")
