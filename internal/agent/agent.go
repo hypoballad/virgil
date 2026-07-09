@@ -745,6 +745,7 @@ func (a *Agent) RunBtw(ctx context.Context, history []llm.Message, question stri
 	for iteration := 0; iteration < MaxIterations; iteration++ {
 		toolDefs := a.toolDefinitions()
 		requestMessages := prepareMessagesForLLMRequest(messages)
+		requestMessages = ensureUserQueryForLLMRequest(requestMessages)
 		heuristicEstimate := a.estimateTokenCountWithToolsRaw(requestMessages)
 		localEstimate := a.applyTokenCalibration(heuristicEstimate)
 		a.emitProgress(ProgressEvent{
@@ -973,6 +974,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 				Content: markdownRecoveryToolChoicePrompt(markdownRecovery.Path),
 			})
 		}
+		requestMessages = ensureUserQueryForLLMRequest(requestMessages)
 
 		// 推定トークン数を計算してTUIを先行更新（ユーザーへのフィードバック用）
 		heuristicEstimate := a.estimateTokenCountWithToolsRaw(requestMessages)
@@ -999,6 +1001,7 @@ func (a *Agent) runWithSystemPromptAndOptions(ctx context.Context, history []llm
 						Content: markdownRecoveryToolChoicePrompt(markdownRecovery.Path),
 					})
 				}
+				requestMessages = ensureUserQueryForLLMRequest(requestMessages)
 				heuristicEstimate = a.estimateTokenCountWithToolsRaw(requestMessages)
 				localEstimate = a.applyTokenCalibration(heuristicEstimate)
 				log.Printf(
@@ -2928,6 +2931,20 @@ func prepareMessagesForLLMRequest(messages []llm.Message) []llm.Message {
 	prepared = dropEmptyAssistantMessages(prepared)
 	prepared = mergeSystemMessagesForLLMRequest(prepared)
 	return prepared
+}
+
+func ensureUserQueryForLLMRequest(messages []llm.Message) []llm.Message {
+	for _, msg := range messages {
+		if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
+			return messages
+		}
+	}
+	out := cloneMessageSlice(messages)
+	out = append(out, llm.Message{
+		Role:    "user",
+		Content: "Continue the current task from the available conversation context and latest tool results.",
+	})
+	return out
 }
 
 func cloneMessageSlice(messages []llm.Message) []llm.Message {

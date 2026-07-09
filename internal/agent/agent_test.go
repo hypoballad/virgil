@@ -2172,6 +2172,43 @@ func TestPrepareMessagesMergesSystemMessagesAtStart(t *testing.T) {
 	}
 }
 
+func TestEnsureUserQueryForLLMRequestAppendsContinuationWhenMissing(t *testing.T) {
+	messages := []llm.Message{
+		{Role: "system", Content: "sys"},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{testToolCall("read_file")}},
+		{Role: "tool", ToolCallID: "call_1", Content: "read result"},
+		{Role: "assistant", Content: "analysis"},
+	}
+
+	prepared := ensureUserQueryForLLMRequest(messages)
+	if len(prepared) != len(messages)+1 {
+		t.Fatalf("prepared messages = %d, want %d: %#v", len(prepared), len(messages)+1, prepared)
+	}
+	last := prepared[len(prepared)-1]
+	if last.Role != "user" || !strings.Contains(last.Content, "Continue the current task") {
+		t.Fatalf("last message should be continuation user prompt, got %#v", last)
+	}
+	if len(messages) != 4 {
+		t.Fatalf("ensureUserQueryForLLMRequest mutated original length: %d", len(messages))
+	}
+}
+
+func TestEnsureUserQueryForLLMRequestKeepsExistingUser(t *testing.T) {
+	messages := []llm.Message{
+		{Role: "system", Content: "sys"},
+		{Role: "user", Content: "latest task"},
+		{Role: "assistant", Content: "analysis"},
+	}
+
+	prepared := ensureUserQueryForLLMRequest(messages)
+	if len(prepared) != len(messages) {
+		t.Fatalf("prepared messages = %d, want %d: %#v", len(prepared), len(messages), prepared)
+	}
+	if prepared[len(prepared)-1].Role != "assistant" {
+		t.Fatalf("existing user request should not append continuation: %#v", prepared)
+	}
+}
+
 func TestPrepareMessagesKeepsOnlyLatestEmptyResponseRecoveryPrompt(t *testing.T) {
 	recovery := emptyResponseRecoveryPrompt()
 	messages := []llm.Message{
